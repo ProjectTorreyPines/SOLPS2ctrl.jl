@@ -3,6 +3,7 @@
 ![Format Check](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/format_check.yml/badge.svg)
 ![Docs](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/make_docs.yml/badge.svg)
 ![Tests](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/test.yml/badge.svg)
+[![codecov](https://codecov.io/gh/ProjectTorreyPines/SOLPS2ctrl.jl/graph/badge.svg?token=ZJBRLAXIS1)](https://codecov.io/gh/ProjectTorreyPines/SOLPS2ctrl.jl)
 
 Synthetic diagnostic workflow manager for use with SOLPS models
 
