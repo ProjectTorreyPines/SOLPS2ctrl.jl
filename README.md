@@ -1,8 +1,8 @@
-# SD4SOLPS
+# SOLPS2ctrl
 
-![Format Check](https://github.com/ProjectTorreyPines/SD4SOLPS.jl/actions/workflows/format_check.yml/badge.svg)
-![Docs](https://github.com/ProjectTorreyPines/SD4SOLPS.jl/actions/workflows/make_docs.yml/badge.svg)
-![Tests](https://github.com/ProjectTorreyPines/SD4SOLPS.jl/actions/workflows/test.yml/badge.svg)
+![Format Check](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/format_check.yml/badge.svg)
+![Docs](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/make_docs.yml/badge.svg)
+![Tests](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/test.yml/badge.svg)
 
 Synthetic diagnostic workflow manager for use with SOLPS models
 
@@ -15,19 +15,19 @@ Steps:
 3) Make assumptions to extend profiles into the core and far SOL, if needed
 4) Run synthetic diagnostic models and record output
 
-For installation and usage instructions, see the [online documentation](https://projecttorreypines.github.io/SD4SOLPS.jl/stable). For documentation on under development branch, see [dev online documentation](https://projecttorreypines.github.io/SD4SOLPS.jl/dev).
+For installation and usage instructions, see the [online documentation](https://projecttorreypines.github.io/SOLPS2ctrl.jl/stable). For documentation on under development branch, see [dev online documentation](https://projecttorreypines.github.io/SOLPS2ctrl.jl/dev).
 
 ## Installation
 
-SD4SOLPS is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
+SOLPS2ctrl is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
 
 ```
 using Pkg
 Pkg.Registry.add(RegistrySpec(url="https://github.com/ProjectTorreyPines/FuseRegistry.jl.git"))
 Pkg.Registry.add("General")
-Pkg.add("SD4SOLPS")
+Pkg.add("SOLPS2ctrl")
 ```
 
 ## Examples
 
-Refer to the instructions on this [wiki page](https://github.com/ProjectTorreyPines/SD4SOLPS.jl/wiki/Demo) to see how to run `examples/demo.ipynb`.
+Refer to the instructions on this [wiki page](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/wiki/Demo) to see how to run `examples/demo.ipynb`.

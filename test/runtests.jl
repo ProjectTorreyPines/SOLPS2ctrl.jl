@@ -1,5 +1,5 @@
-using SD4SOLPS: SD4SOLPS
-using SOLPS2IMAS: SOLPS2IMAS
+using SOLPS2ctrl: SOLPS2ctrl
+using SOLPS2imas: SOLPS2imas
 using IMAS: IMAS
 using EFIT: EFIT
 using Plots
@@ -7,7 +7,7 @@ using Test
 using Unitful: Unitful
 using Interpolations: Interpolations
 using ArgParse: ArgParse
-using GGDUtils: GGDUtils, get_grid_subset
+using IMASggd: IMASggd, get_grid_subset
 
 function parse_commandline()
     # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
@@ -83,29 +83,29 @@ end
 #     edge_rho = Array(LinRange(0.88, 1.0, 18))
 #     edge_quantity = make_test_profile(edge_rho)
 #     output_rho = Array(LinRange(0, 1.0, 201))
-#     output_quantity = SD4SOLPS.extrapolate_core(edge_rho, edge_quantity, output_rho)
+#     output_quantity = SOLPS2ctrl.extrapolate_core(edge_rho, edge_quantity, output_rho)
 #     Plots.plot(output_rho, output_quantity)
 #     Plots.plot!(edge_rho, edge_quantity, marker='.')
 # end
 
 function define_default_sample_set()
     sample_path =
-        splitdir(pathof(SD4SOLPS))[1] *
+        splitdir(pathof(SOLPS2ctrl))[1] *
         "/../sample/ITER_Lore_2296_00000/extended_output"
     sample_path2 =
-        splitdir(pathof(SD4SOLPS))[1] * "/../sample/ITER_Lore_2296_00000/baserun"
+        splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/ITER_Lore_2296_00000/baserun"
     sample_path3 =
-        splitdir(pathof(SD4SOLPS))[1] * "/../sample/ITER_Lore_2296_00000/run_restart"
+        splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/ITER_Lore_2296_00000/run_restart"
 
     # Requires dvc pull before the full samples will be loaded
     # Sorry, the minimal samples are too minimal for this one.
-    file_list = SD4SOLPS.find_files_in_allowed_folders(
+    file_list = SOLPS2ctrl.find_files_in_allowed_folders(
         sample_path, sample_path2, sample_path3;
         eqdsk_file="thereisntoneyet",
     )
     b2fgmtry, b2time, b2mn, eqdsk = file_list
     eqdsk =
-        splitdir(pathof(SD4SOLPS))[1] *
+        splitdir(pathof(SOLPS2ctrl))[1] *
         "/../sample/ITER_Lore_2296_00000/EQDSK/g002296.00200"
     return b2fgmtry, b2time, b2mn, eqdsk
 end
@@ -114,26 +114,27 @@ if args["unit_utils"]
     @testset "Unit conversion utilities" begin
         # Gas unit converter
         flow_tls = 40.63 * Unitful.Torr * Unitful.L / Unitful.s
-        flow_pam3 = SD4SOLPS.gas_unit_converter(flow_tls, "torr L s^-1", "Pa m^3 s^-1")
+        flow_pam3 =
+            SOLPS2ctrl.gas_unit_converter(flow_tls, "torr L s^-1", "Pa m^3 s^-1")
         flow_pam3_no_unitful =
-            SD4SOLPS.gas_unit_converter(flow_tls.val, "torr L s^-1", "Pa m^3 s^-1")
+            SOLPS2ctrl.gas_unit_converter(flow_tls.val, "torr L s^-1", "Pa m^3 s^-1")
         @test flow_pam3.val > 0.0
         @test flow_pam3_no_unitful ==
               Unitful.uconvert(Unitful.Pa * Unitful.m^3 / Unitful.s, flow_pam3).val
 
-        flow_molecules1 = SD4SOLPS.gas_unit_converter(
+        flow_molecules1 = SOLPS2ctrl.gas_unit_converter(
             flow_tls,
             "torr L s^-1",
             "molecules s^-1";
             temperature=293.15 * Unitful.K,
         )
-        flow_molecules2 = SD4SOLPS.gas_unit_converter(
+        flow_molecules2 = SOLPS2ctrl.gas_unit_converter(
             flow_tls,
             "torr L s^-1",
             "molecules s^-1";
             temperature=300.0 * Unitful.K,
         )
-        flow_molecules3 = SD4SOLPS.gas_unit_converter(
+        flow_molecules3 = SOLPS2ctrl.gas_unit_converter(
             flow_tls.val,
             "torr L s^-1",
             "molecules s^-1";
@@ -150,7 +151,8 @@ if args["core_profile_extension"]
         edge_rho = Array(LinRange(0.88, 1.0, 18))
         edge_quantity = make_test_profile(edge_rho)
         output_rho = Array(LinRange(0, 1.0, 201))
-        output_quantity = SD4SOLPS.extrapolate_core(edge_rho, edge_quantity, output_rho)
+        output_quantity =
+            SOLPS2ctrl.extrapolate_core(edge_rho, edge_quantity, output_rho)
         @test length(output_quantity) == length(output_rho)
 
         # The full workflow --------------------------------------
@@ -166,12 +168,12 @@ if args["core_profile_extension"]
         @test isfile(b2mn)
         @test isfile(eqdsk)
         eqdsk_time = parse(Float64, split(eqdsk, ".")[end]) / 1000.0
-        dd = SOLPS2IMAS.solps2imas(b2fgmtry, b2time; b2mn=b2mn)
-        SD4SOLPS.geqdsk_to_imas!(eqdsk, dd; set_time=eqdsk_time)
+        dd = SOLPS2imas.solps2imas(b2fgmtry, b2time; b2mn=b2mn)
+        SOLPS2ctrl.geqdsk_to_imas!(eqdsk, dd; set_time=eqdsk_time)
         rho = dd.equilibrium.time_slice[1].profiles_1d.rho_tor_norm
 
-        if !SD4SOLPS.check_rho_1d(dd; time_slice=1)
-            SD4SOLPS.add_rho_to_equilibrium!(dd)
+        if !SOLPS2ctrl.check_rho_1d(dd; time_slice=1)
+            SOLPS2ctrl.add_rho_to_equilibrium!(dd)
             rho = dd.equilibrium.time_slice[1].profiles_1d.rho_tor_norm
             println("Repaired missing rho for core profile test")
         end
@@ -182,7 +184,7 @@ if args["core_profile_extension"]
         test_slice_idx = 1
 
         # Do it
-        SD4SOLPS.fill_in_extrapolated_core_profile!(dd, quantity_name)
+        SOLPS2ctrl.fill_in_extrapolated_core_profile!(dd, quantity_name)
 
         # Inspect results
         @test length(dd.core_profiles.profiles_1d) > 0
@@ -203,9 +205,9 @@ if args["edge_profile_extension"]
         # Test for getting mesh spacing
         b2fgmtry, b2time, b2mn, eqdsk = define_default_sample_set()
         eqdsk_time = parse(Float64, split(eqdsk, ".")[end]) / 1000.0
-        dd = SOLPS2IMAS.solps2imas(b2fgmtry, b2time; b2mn=b2mn)
-        SD4SOLPS.geqdsk_to_imas!(eqdsk, dd; set_time=eqdsk_time)
-        dpsin = SD4SOLPS.mesh_psi_spacing(dd)
+        dd = SOLPS2imas.solps2imas(b2fgmtry, b2time; b2mn=b2mn)
+        SOLPS2ctrl.geqdsk_to_imas!(eqdsk, dd; set_time=eqdsk_time)
+        dpsin = SOLPS2ctrl.mesh_psi_spacing(dd)
         @test dpsin > 0.0
 
         # Extend the mesh
@@ -216,9 +218,14 @@ if args["edge_profile_extension"]
             deepcopy(get_grid_subset(grid_ggd, i)) for
             i ∈ extended_subs
         ]
-        cfn = SD4SOLPS.cached_mesh_extension!(dd, eqdsk, b2fgmtry; clear_cache=true)
+        cfn = SOLPS2ctrl.cached_mesh_extension!(dd, eqdsk, b2fgmtry; clear_cache=true)
         println("cleared ext mesh cache: ", cfn)
-        SD4SOLPS.cached_mesh_extension!(dd, eqdsk, b2fgmtry; grid_ggd_idx=grid_ggd_idx)
+        SOLPS2ctrl.cached_mesh_extension!(
+            dd,
+            eqdsk,
+            b2fgmtry;
+            grid_ggd_idx=grid_ggd_idx,
+        )
         for j ∈ extended_subs
             orig_sub = orig_subs[j]
             std_sub = get_grid_subset(grid_ggd, -j)
@@ -272,8 +279,8 @@ if args["heavy_utilities"]
         # (or anyway evaluating them at any R,Z location)
         dd = IMAS.dd()
         eqdsk_file =
-            splitdir(pathof(SD4SOLPS))[1] * "/../sample/geqdsk_iter_small_sample"
-        SD4SOLPS.geqdsk_to_imas!(eqdsk_file, dd)
+            splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/geqdsk_iter_small_sample"
+        SOLPS2ctrl.geqdsk_to_imas!(eqdsk_file, dd)
         quantity = "electrons.density"
         prof_time_idx = eq_time_idx = 1
         resize!(dd.core_profiles.profiles_1d, prof_time_idx)
@@ -289,12 +296,12 @@ if args["heavy_utilities"]
         points = collect(Base.Iterators.product(rg, zg))
         r = getfield.(points, 1)
         z = getfield.(points, 2)
-        if !SD4SOLPS.check_rho_1d(dd; time_slice=eq_time_idx)
-            SD4SOLPS.add_rho_to_equilibrium!(dd)
+        if !SOLPS2ctrl.check_rho_1d(dd; time_slice=eq_time_idx)
+            SOLPS2ctrl.add_rho_to_equilibrium!(dd)
             println("DD was repaired (rho added) for core 2d utility test")
         end
         density_on_grid =
-            GGDUtils.interp(
+            IMASggd.interp(
                 dd.core_profiles.profiles_1d[1].electrons.density,
                 dd.core_profiles.profiles_1d[1],
                 dd.equilibrium.time_slice[1],
@@ -307,8 +314,8 @@ if args["repair_eq"]
     @testset "repair_eq" begin
         # Prepare sample
         dd = IMAS.dd()
-        eqdsk = splitdir(pathof(SD4SOLPS))[1] * "/../sample/geqdsk_iter_small_sample"
-        SD4SOLPS.geqdsk_to_imas!(eqdsk, dd)
+        eqdsk = splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/geqdsk_iter_small_sample"
+        SOLPS2ctrl.geqdsk_to_imas!(eqdsk, dd)
         # Make sure rho is missing
         nt = length(dd.equilibrium.time_slice)
         for it ∈ 1:nt
@@ -316,7 +323,7 @@ if args["repair_eq"]
             eqt.profiles_1d.rho_tor_norm = Vector{Float64}()
         end
         # Add rho
-        SD4SOLPS.add_rho_to_equilibrium!(dd)
+        SOLPS2ctrl.add_rho_to_equilibrium!(dd)
         # Check
         rho = dd.equilibrium.time_slice[1].profiles_1d.rho_tor_norm
         println(rho)
@@ -328,7 +335,7 @@ end
 if args["geqdsk_to_imas"]
     @testset "geqdsk_to_imas" begin
         sample_files =
-            (splitdir(pathof(SD4SOLPS))[1] * "/../sample/") .* [
+            (splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/") .* [
                 "g184833.03600", "geqdsk_iter_small_sample",
             ]
         append!(
@@ -344,7 +351,7 @@ if args["geqdsk_to_imas"]
             else
                 eqdsk_time = nothing
             end
-            SD4SOLPS.geqdsk_to_imas!(
+            SOLPS2ctrl.geqdsk_to_imas!(
                 sample_file,
                 dd;
                 set_time=eqdsk_time,
@@ -427,13 +434,13 @@ if args["preparation"]
     @testset "preparation" begin
         eqdsk_file = "geqdsk_iter_small_sample"
         sample_paths = [
-            splitdir(pathof(SD4SOLPS))[1] * "/../sample",
+            splitdir(pathof(SOLPS2ctrl))[1] * "/../sample",
         ]
         core_method = "simple"
         edge_method = "simple"
-        filename = splitdir(pathof(SD4SOLPS))[1] * "/../sd_input_data"
+        filename = splitdir(pathof(SOLPS2ctrl))[1] * "/../sd_input_data"
         output_format = "json"
-        dd = SD4SOLPS.preparation(
+        dd = SOLPS2ctrl.preparation(
             eqdsk_file,
             sample_paths;
             core_method=core_method,

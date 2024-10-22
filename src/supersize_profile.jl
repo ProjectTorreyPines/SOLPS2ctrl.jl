@@ -2,10 +2,9 @@
 Utilities for extrapolating profiles
 """
 
-using IMAS: IMAS
 using Interpolations: Interpolations
-using GGDUtils:
-    GGDUtils, get_grid_subset, add_subset_element!, get_subset_boundary,
+using IMASggd:
+    IMASggd, get_grid_subset, add_subset_element!, get_subset_boundary,
     project_prop_on_subset!, get_subset_centers, get_TPS_mats
 using PolygonOps: PolygonOps
 using JSON: JSON

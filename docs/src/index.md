@@ -1,5 +1,5 @@
 
-# SD4SOLPS.jl 
+# SOLPS2ctrl.jl 
 
 ```@contents
 Pages = ["index.md"]
@@ -10,13 +10,13 @@ This repository serves as the top most workflow manager with helpful utilities t
 
 ## Documentation of other repositories in this project
 
-### [GGDUtils.jl](https://projecttorreypines.github.io/GGDUtils.jl/stable)
+### [IMASggd.jl](https://projecttorreypines.github.io/IMASggd.jl/stable)
 
-### [SOLPS2IMAS.jl](https://projecttorreypines.github.io/SOLPS2IMAS.jl/stable)
+### [SOLPS2imas.jl](https://projecttorreypines.github.io/SOLPS2imas.jl/stable)
 
 ### [SynthDiag.jl](https://projecttorreypines.github.io/SynthDiag.jl/stable)
 
-SD4SOLPS is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
+SOLPS2ctrl is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
 
 ## Installation
 
@@ -24,7 +24,7 @@ SD4SOLPS is registered with public repository [FuseRegistry](https://github.com/
 using Pkg
 Pkg.Registry.add(RegistrySpec(url="https://github.com/ProjectTorreyPines/FuseRegistry.jl.git"))
 Pkg.Registry.add("General")
-Pkg.add("SD4SOLPS")
+Pkg.add("SOLPS2ctrl")
 ```
 
 ## Top file handling functions

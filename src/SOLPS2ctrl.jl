@@ -1,7 +1,7 @@
-module SD4SOLPS
+module SOLPS2ctrl
 
 using IMAS: IMAS
-using SOLPS2IMAS: SOLPS2IMAS
+using SOLPS2imas: SOLPS2imas
 using EFIT: EFIT
 using Interpolations: Interpolations
 
@@ -24,7 +24,7 @@ about the SOLPS case. Returns a list of filenames with complete paths.
 Example:
 
 ```julia
-SD4SOLPS.find_files_in_allowed_folders(
+SOLPS2ctrl.find_files_in_allowed_folders(
     "<your samples folder>/D3D_Ma_184833_03600";
     eqdsk_file="g184833.03600",
 )
@@ -97,7 +97,7 @@ function geqdsk_to_imas!(
     eqt = eq.time_slice[time_index]
     eqt.time = g.time
 
-    source_for_summary = "gEQDSK file $gfilename loaded during SD4SOLPS workflow."
+    source_for_summary = "gEQDSK file $gfilename loaded during SOLPS2ctrl workflow."
 
     # 0D
     gq = eqt.global_quantities
@@ -284,10 +284,10 @@ function preparation(
     add_rho_to_equilibrium!(dd)  # Doesn't do anything if rho is valid
     dd.global_time = dd.equilibrium.time_slice[1].time
     for eqt ∈ dd.equilibrium.time_slice
-        IMAS.flux_surfaces(eqt)
+        IMAS.flux_surfaces(eqt, dd.wall)
     end
     # Add SOLPS data
-    dd = SOLPS2IMAS.solps2imas(b2fgmtry, b2time; b2mn=b2mn, ids=dd)
+    dd = SOLPS2imas.solps2imas(b2fgmtry, b2time; b2mn=b2mn, ids=dd)
     println("Loaded input data into IMAS DD")
 
     # Core profiles
@@ -345,4 +345,4 @@ function preparation(
     return dd
 end
 
-end # module SD4SOLPS
+end # module SOLPS2ctrl

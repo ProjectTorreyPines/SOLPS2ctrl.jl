@@ -1,15 +1,15 @@
 using Documenter
-using SD4SOLPS
+using SOLPS2ctrl
 
 makedocs(;
-    modules=[SD4SOLPS],
+    modules=[SOLPS2ctrl],
     format=Documenter.HTML(),
-    sitename="SD4SOLPS",
+    sitename="SOLPS2ctrl",
     checkdocs=:none,
 )
 
 deploydocs(;
-    repo="github.com/ProjectTorreyPines/SD4SOLPS.jl.git",
+    repo="github.com/ProjectTorreyPines/SOLPS2ctrl.jl.git",
     target="build",
     branch="gh-pages",
     devbranch="master",
