@@ -5,16 +5,14 @@
 ![Tests](https://github.com/ProjectTorreyPines/SOLPS2ctrl.jl/actions/workflows/test.yml/badge.svg)
 [![codecov](https://codecov.io/gh/ProjectTorreyPines/SOLPS2ctrl.jl/graph/badge.svg?token=ZJBRLAXIS1)](https://codecov.io/gh/ProjectTorreyPines/SOLPS2ctrl.jl)
 
-Synthetic diagnostic workflow manager for use with SOLPS models
+This repository is the top level layer for managing workflow for:
 
-This repository is the top level layer for managing a workflow for calculating
-the outputs of synthetic diagnostics attached to a SOLPS model.
-
-Steps:
-1) Load SOLPS into IMAS DD format if not already
-2) Load equilibrium (that the SOLPS mesh was based on) into IMAS DD format
-3) Make assumptions to extend profiles into the core and far SOL, if needed
-4) Run synthetic diagnostic models and record output
+* Loading SOLPS outputs into IMAS data dictionary format
+* Loading equilibrium (that the SOLPS mesh was based on) into IMAS DD format
+* Extrapolating results into core and far SOL region if required
+* Running synthetic diagnostics on them
+* Performing system identification (to be added)
+* Designing and tuning linear causal and model predictive controllers (to be added)
 
 For installation and usage instructions, see the [online documentation](https://projecttorreypines.github.io/SOLPS2ctrl.jl/stable). For documentation on under development branch, see [dev online documentation](https://projecttorreypines.github.io/SOLPS2ctrl.jl/dev).
 

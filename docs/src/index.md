@@ -6,7 +6,14 @@ Pages = ["index.md"]
 Depth = 3
 ```
 
-This repository serves as the top most workflow manager with helpful utilities to use other repositories in this project.
+This repository serves as the top most workflow manager with helpful utilities to use other repositories in this project. Following steps are supported/planned in near future:
+
+* Loading SOLPS outputs into IMAS data dictionary format
+* Loading equilibrium (that the SOLPS mesh was based on) into IMAS DD format
+* Extrapolating results into core and far SOL region if required
+* Running synthetic diagnostics on them
+* Performing system identification (to be added)
+* Designing and tuning linear causal and model predictive controllers (to be added)
 
 ## Documentation of other repositories in this project
 
@@ -14,7 +21,7 @@ This repository serves as the top most workflow manager with helpful utilities t
 
 ### [SOLPS2imas.jl](https://projecttorreypines.github.io/SOLPS2imas.jl/stable)
 
-### [SynthDiag.jl](https://projecttorreypines.github.io/SynthDiag.jl/stable)
+### [FusionSyntheticDiagnostics.jl](https://projecttorreypines.github.io/FusionSyntheticDiagnostics.jl/stable)
 
 SOLPS2ctrl is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
 
