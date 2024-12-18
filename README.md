@@ -18,12 +18,8 @@ For installation and usage instructions, see the [online documentation](https://
 
 ## Installation
 
-SOLPS2ctrl is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
-
 ```
 using Pkg
-Pkg.Registry.add(RegistrySpec(url="https://github.com/ProjectTorreyPines/FuseRegistry.jl.git"))
-Pkg.Registry.add("General")
 Pkg.add("SOLPS2ctrl")
 ```
 

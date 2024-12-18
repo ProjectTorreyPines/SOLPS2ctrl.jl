@@ -23,14 +23,10 @@ This repository serves as the top most workflow manager with helpful utilities t
 
 ### [FusionSyntheticDiagnostics.jl](https://projecttorreypines.github.io/FusionSyntheticDiagnostics.jl/stable)
 
-SOLPS2ctrl is registered with public repository [FuseRegistry](https://github.com/ProjectTorreyPines/FuseRegistry.jl/). For installation:
-
 ## Installation
 
 ```
 using Pkg
-Pkg.Registry.add(RegistrySpec(url="https://github.com/ProjectTorreyPines/FuseRegistry.jl.git"))
-Pkg.Registry.add("General")
 Pkg.add("SOLPS2ctrl")
 ```
 
