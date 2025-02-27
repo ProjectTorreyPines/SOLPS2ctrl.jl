@@ -5,7 +5,7 @@ Utilities for extrapolating profiles
 using Interpolations: Interpolations
 using IMASggd:
     IMASggd, get_grid_subset, add_subset_element!, get_subset_boundary,
-    project_prop_on_subset!, get_subset_centers, get_TPS_mats
+    project_prop_on_subset!, get_subset_centers, get_TPS_mats, subset_do
 using PolygonOps: PolygonOps
 using JSON: JSON
 
@@ -504,21 +504,15 @@ function pick_mesh_ext_starting_points(
     # Choose starting points for the orthogonal (to the contour) gridlines
     # Use the existing cells of the standard mesh
     all_cell_subset = get_grid_subset(grid_ggd, 5)
-    all_border_edges = get_subset_boundary(space, all_cell_subset)
-    core_edges = get_grid_subset(grid_ggd, 15)
+    all_cell_bdry = get_subset_boundary(space, all_cell_subset)
+    core_bdry = get_grid_subset(grid_ggd, 15)
     outer_target = get_grid_subset(grid_ggd, 13)
     inner_target = get_grid_subset(grid_ggd, 14)
-    ci = [ele.object[1].index for ele ∈ core_edges.element]
-    oi = [ele.object[1].index for ele ∈ outer_target.element]
-    ii = [ele.object[1].index for ele ∈ inner_target.element]
-    border_edges = []
-    for i ∈ eachindex(all_border_edges)
-        bi = all_border_edges[i].object[1].index
-        if !(bi in oi) & !(bi in ii) & !(bi in ci)
-            border_edges = [border_edges; all_border_edges[i]]
-        end
-    end
+    wall_subset = subset_do(setdiff, all_cell_bdry, core_bdry)
+    wall_subset = subset_do(setdiff, wall_subset, outer_target)
+    wall_subset = subset_do(setdiff, wall_subset, inner_target)
 
+    border_edges = wall_subset.element
     npol = length(border_edges)
     r = zeros(npol)
     z = zeros(npol)
@@ -941,7 +935,6 @@ function cached_mesh_extension!(
         return cached_ext_name
     end
     if isfile(cached_ext_name)
-        # md = YAML.load_file(cached_ext_name)
         md = JSON.parsefile(cached_ext_name)
         pfr_transition = md["pfr_transition"]
         mesh_r = convert(Matrix{Float64}, mapreduce(permutedims, vcat, md["r"])')
@@ -974,16 +967,6 @@ function cached_mesh_extension!(
         open(cached_ext_name, "w") do f
             return JSON.print(f, data)
         end
-        # fr = open("mesh_r.dat", "w")
-        # fz = open("mesh_z.dat", "w")
-        # for i ∈ 1:npol
-        #     for j ∈ 1:nlvl
-        #         print(fr, mesh_r[i, j], " ")
-        #         print(fz, mesh_z[i, j], " ")
-        #     end
-        #     println(fr, "")
-        #     println(fz, "")
-        # end
     end
     return cached_ext_name
 end
