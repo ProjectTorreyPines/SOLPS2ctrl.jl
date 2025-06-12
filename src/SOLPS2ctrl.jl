@@ -10,6 +10,7 @@ export find_files_in_allowed_folders, geqdsk_to_imas!, preparation
 include("$(@__DIR__)/supersize_profile.jl")
 include("$(@__DIR__)/repair_eq.jl")
 include("$(@__DIR__)/unit_utils.jl")
+include("$(@__DIR__)/system_id.jl")
 
 """
     find_files_in_allowed_folders(
@@ -198,8 +199,8 @@ function geqdsk_to_imas!(
         if nprim > 0
             bsx = eqt.boundary_separatrix.x_point
             resize!(bsx, nprim)
-            xrprim = xrs[xseps.==1]
-            xzprim = xzs[xseps.==1]
+            xrprim = xrs[xseps .== 1]
+            xzprim = xzs[xseps .== 1]
             for i ∈ nprim
                 bsx[i].r = xrprim[i]
                 bsx[i].z = xzprim[i]
@@ -209,8 +210,8 @@ function geqdsk_to_imas!(
         if nsec > 0
             bssx = eqt.boundary_secondary_separatrix.x_point
             resize!(bssx, nsec)
-            xrsec = xrs[xseps.==2]
-            xzsec = xzs[xseps.==2]
+            xrsec = xrs[xseps .== 2]
+            xzsec = xzs[xseps .== 2]
             for i ∈ nsec
                 bssx[i].r = xrsec[i]
                 bssx[i].z = xzsec[i]
@@ -311,7 +312,7 @@ function preparation(
     for core_profile ∈ core_profiles
         tags = split(core_profile, ".")
         parent = dd.edge_profiles.ggd[1]
-        for tag ∈ tags[1:end-1]
+        for tag ∈ tags[1:(end-1)]
             parent = getproperty(parent, Symbol(tag))
         end
         qty = getproperty(parent, Symbol(tags[end]), core_profile)

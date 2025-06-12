@@ -1,3 +1,4 @@
+using SOLPS2ctrl
 using SOLPS2ctrl: SOLPS2ctrl
 using SOLPS2imas: SOLPS2imas
 using IMAS: IMAS
@@ -8,6 +9,8 @@ using Unitful: Unitful
 using Interpolations: Interpolations
 using ArgParse: ArgParse
 using IMASggd: IMASggd, get_grid_subset
+using DelimitedFiles: readdlm
+using Statistics: mean
 
 function parse_commandline()
     # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
@@ -35,6 +38,9 @@ function parse_commandline()
             :action => :store_true),
         ["--preparation"],
         Dict(:help => "Test only preparation",
+            :action => :store_true),
+        ["--system_id"],
+        Dict(:help => "Test only system identification",
             :action => :store_true),
     )
     args = ArgParse.parse_args(localARGS, s)
@@ -305,7 +311,10 @@ if args["heavy_utilities"]
                 dd.core_profiles.profiles_1d[1].electrons.density,
                 dd.core_profiles.profiles_1d[1],
                 dd.equilibrium.time_slice[1],
-            ).(r, z)
+            ).(
+                r,
+                z,
+            )
         @test size(density_on_grid) == (length(rg), length(zg))
     end
 end
@@ -457,5 +466,133 @@ if args["preparation"]
         @test isfile(out_file)
         print("imas2json timing: ")
         @time IMAS.imas2json(dd, filename * ".json", strict=true, freeze=false)
+    end
+end
+
+if args["system_id"]
+    @testset "system_id" begin
+        case = "$(@__DIR__)/../sample/D3D_Lore_Time_Dep"
+        println("Reading interferometer data...")
+        print("json2imas time: ")
+        @time ids = IMAS.json2imas(case * "/imas_with_ifo.json")
+        # The file above "imas_with_ifo.json" has been created using following code.
+        # We jump directly to after the interferometer addition to avoid making
+        # FusionSyntheticDiagnostics a dependency of this repo.
+        #
+        # data_dir = case * "/puff2.5e21_ss_noLat_dribble_308_2d_output"
+        # b2fgmtry = case * "/baserun/b2fgmtry"
+        # b2time = data_dir * "/b2time.nc"
+        # b2mn = data_dir * "/b2mn.dat"
+        # fort = (data_dir * "/fort.33", data_dir * "/fort.34", data_dir * "/fort.35")
+        # eqdsk = case * "/baserun/gfile"
+        # SOLPS2ctrl.geqdsk_to_imas!(eqdsk, ids)
+        # ids = SOLPS2imas.solps2imas(b2fgmtry, b2time; b2mn=b2mn, fort=fort)
+        # SOLPS2ctrl.fill_in_extrapolated_core_profile!(
+        #     ids,
+        #     "electrons.density";
+        #     method="simple",
+        #     cell_subset_idx=-5,
+        # )
+        # FusionSyntheticDiagnostics.add_interferometer!(
+        #     case * "/interferometer.json",
+        #     ids;
+        #     n_e_gsi=-5,
+        #     overwrite=true,
+        # )
+
+        ifo_ch = 3
+        ne_factor = 1e-19
+        ne_offset = ids.interferometer.channel[ifo_ch].n_e_line_average.data[1]
+        boltzmann_k = 1.38064852e-23
+        Temp = 300.0
+
+        ifo_tt = ids.interferometer.channel[1].n_e_line_average.time
+        # Make a uniform linear time series
+        tt = collect(ifo_tt[1]:0.001:ifo_tt[end])
+
+        # Input gas data
+        input_gas_data = readdlm(case * "/input_gas_atomsps.txt"; comments=true)
+        gas_factor = 1e-21
+        gas_offset = input_gas_data[1, 2]
+        # Intepolate input data along the uniform time
+        input_gas =
+            Interpolations.linear_interpolation(
+                input_gas_data[:, 1] .- 5.0,
+                input_gas_data[:, 2],
+            ).(
+                tt,
+            )
+
+        # Output interferometer data
+        ne_ifo = ids.interferometer.channel[ifo_ch].n_e_line_average.data
+        # Interpolate output data along the uniform time
+        ne_uniform = Interpolations.linear_interpolation(ifo_tt, ne_ifo).(tt)
+
+        function inp_cond_step(
+            gas_so::Float64,
+            previous_gas_so::Float64,
+            corr::Float64;
+            p::Union{Float64, Vector{Float64}}=-0.17,
+        )::Tuple{Float64, Float64}
+            if p isa Array
+                param = p[1]
+            else
+                param = p
+            end
+            if gas_so + corr > previous_gas_so
+                corr = corr + (gas_so + corr - previous_gas_so) * param
+            end
+            return gas_so + corr, corr
+        end
+
+        """
+            inp_cond(inp_gas; p=0.242)
+
+        Condition the input to have this non-linearity. Only when the gas is increasing, the
+        increase amount is changed by a factor of 'p' of the actual change. This gives a
+        response of gas input when it is rising vs falling and thus constitute a non-linearity.
+        """
+        function inp_cond(
+            gas_so::Array{Float64};
+            p::Union{Float64, Vector{Float64}}=-0.17,
+        )::Array{Float64}
+            ret_vec = deepcopy(gas_so)
+            corr = 0.0
+            for ii ∈ 2:length(ret_vec)
+                ret_vec[ii], corr = inp_cond_step(ret_vec[ii], ret_vec[ii-1], corr; p)
+            end
+            return ret_vec
+        end
+
+        # Third order linear fit of the model
+        linear_plant_3 = SOLPS2ctrl.system_id(
+            input_gas, ne_uniform, tt, 3;
+            inp_offset=gas_offset, inp_factor=gas_factor,
+            out_offset=ne_offset, out_factor=ne_factor,
+        )
+
+        # Non-linear input + 3rd order linear fit
+        nonlin_plant_3, p_opt = system_id_optimal_input_cond(
+            input_gas, ne_uniform, tt, 3;
+            inp_offset=gas_offset, inp_factor=gas_factor,
+            out_offset=ne_offset, out_factor=ne_factor,
+            input_cond=inp_cond, input_cond_args_guess=Dict{Symbol, Any}(:p => -0.2),
+        )
+
+        lin_out = model_evolve(
+            linear_plant_3, input_gas;
+            inp_offset=gas_offset, inp_factor=gas_factor,
+            out_offset=ne_offset, out_factor=ne_factor,
+        )
+
+        nonlin_out = model_evolve(
+            nonlin_plant_3, input_gas;
+            inp_offset=gas_offset, inp_factor=gas_factor,
+            out_offset=ne_offset, out_factor=ne_factor,
+            input_cond=inp_cond, input_cond_kwargs=p_opt)
+
+        @test sqrt(mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
+
+        @test sqrt(mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
     end
 end
