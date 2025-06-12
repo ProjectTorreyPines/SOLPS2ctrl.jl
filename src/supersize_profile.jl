@@ -92,12 +92,14 @@ function extrapolate_core(
     q_extend .+= q_offset
 
     output_profile = Array{Float64}(undef, length(rho_output))
-    output_profile[rho_output.<rf] = q_extend[rho_output.<rf]
-    output_profile[rho_output.>=rf] =
+    output_profile[rho_output .< rf] = q_extend[rho_output .< rf]
+    output_profile[rho_output .>= rf] =
         Interpolations.linear_interpolation(
             edge_rho,
             edge_quantity,
-        ).(rho_output[rho_output.>=rf])
+        ).(
+            rho_output[rho_output .>= rf],
+        )
     return output_profile
 end
 
@@ -236,7 +238,9 @@ function fill_in_extrapolated_core_profile!(
             Interpolations.linear_interpolation(
                 psi1_eq,
                 rho1_eq,
-            ).(psi_for_quantity[in_bounds])
+            ).(
+                psi_for_quantity[in_bounds],
+            )
 
         # Make sure the output 1D rho grid exists; create it if needed
         if IMAS.ismissing(dd.core_profiles.profiles_1d[it].grid, :rho_tor_norm)
@@ -257,7 +261,7 @@ function fill_in_extrapolated_core_profile!(
         end
         parent = dd.core_profiles.profiles_1d[it]
         tags = split(quantity_name, ".")
-        for tag ∈ tags[1:end-1]
+        for tag ∈ tags[1:(end-1)]
             parent = getproperty(parent, Symbol(tag))
         end
         setproperty!(parent, Symbol(tags[end]), quantity_core)
@@ -412,7 +416,7 @@ function mesh_psi_spacing(
         end
     else
         if avoid_guard_cell
-            dpsin = diff(psin[2:end-1])
+            dpsin = diff(psin[2:(end-1)])
         else
             dpsin = diff(psin)
         end
