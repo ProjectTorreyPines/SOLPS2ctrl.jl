@@ -1,0 +1,12 @@
+md5: d7a572fef4d1491734ca69cc9ad6f0fd
+frozen: true
+deps:
+- path: D3D_Lore_Time_Dep/imas_with_ifo.json
+  repo:
+    url: git@github.com:ProjectTorreyPines/SOLPSTestSamples.git
+    rev_lock: 34463adc4d9b452712c39a52654dd8894af37820
+outs:
+- md5: 8198d08d5dd62b797901546e58794106
+  size: 249503911
+  hash: md5
+  path: imas_with_ifo.json
