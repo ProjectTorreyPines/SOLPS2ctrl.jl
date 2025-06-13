@@ -5,7 +5,8 @@ Utilities for extrapolating profiles
 using Interpolations: Interpolations
 using IMASggd:
     IMASggd, get_grid_subset, add_subset_element!, get_subset_boundary,
-    project_prop_on_subset!, get_subset_centers, get_TPS_mats, subset_do
+    project_prop_on_subset!, get_subset_centers, get_TPS_mats, subset_do,
+    all__grid_subset_prop
 using PolygonOps: PolygonOps
 using JSON: JSON
 
@@ -91,12 +92,14 @@ function extrapolate_core(
     q_extend .+= q_offset
 
     output_profile = Array{Float64}(undef, length(rho_output))
-    output_profile[rho_output.<rf] = q_extend[rho_output.<rf]
-    output_profile[rho_output.>=rf] =
+    output_profile[rho_output .< rf] = q_extend[rho_output .< rf]
+    output_profile[rho_output .>= rf] =
         Interpolations.linear_interpolation(
             edge_rho,
             edge_quantity,
-        ).(rho_output[rho_output.>=rf])
+        ).(
+            rho_output[rho_output .>= rf],
+        )
     return output_profile
 end
 
@@ -107,8 +110,9 @@ end
         method::String="simple",
         eq_time_idx::Int=1,
         eq_profiles_2d_idx::Int=1,
+        value_field::Symbol=:values,
         grid_ggd_idx::Int=1,
-        space_idx::Int=1,
+        cell_subset_idx::Int=5,
     )
 
 This function accepts a DD that should be populated with `equilibrium` and
@@ -131,11 +135,10 @@ Input arguments:
     equilibrium time series with the SOLPS run and then have to specify which
     slice of the equilibrium corresponds to the SOLPS mesh.
   - `eq_profiles_2d_idx`: index of the `profiles_2D` in equilibrium `time_slice`.
+  - `value_field`: Symbolic name of the values field in quantity.
   - `grid_ggd_idx`: index of the `grid_ggd` to use. For a typical SOLPS run, the SOLPS
     grid is fixed, so this index defaults to 1. But in future, if a time varying grid is
     used, then this index will need to be specified.
-  - `space_id`x: index of the space to use. For a typical SOLPS run, there will be only
-    one space so this index will mostly remain at 1.
   - `cell_subset_idx`: index of the subset of cells to use for the extrapolation. The
     default is 5, which is the subset of all cells. If `edge_profiles` data is instead
     present for a different subset, for instance, -5, which are b2.5 cells only, then
@@ -147,13 +150,12 @@ function fill_in_extrapolated_core_profile!(
     method::String="simple",
     eq_time_idx::Int=1,
     eq_profiles_2d_idx::Int=1,
+    value_field::Symbol=:values,
     grid_ggd_idx::Int=1,
-    space_idx::Int=1,
     cell_subset_idx::Int=5,
 )
     check_rho_1d(dd; time_slice=eq_time_idx, throw_on_fail=true)
     grid_ggd = dd.edge_profiles.grid_ggd[grid_ggd_idx]
-    space = grid_ggd.space[space_idx]
     cell_subset = get_grid_subset(grid_ggd, cell_subset_idx)
     midplane_subset = get_grid_subset(grid_ggd, 11)
 
@@ -183,20 +185,17 @@ function fill_in_extrapolated_core_profile!(
         resize!(dd.core_profiles.profiles_1d, nt)
     end
     TPS_mats = get_TPS_mats(grid_ggd, cell_subset_idx)
-    for it ∈ 1:nt
-        tags = split(quantity_name, ".")
-        quantity_str = dd.edge_profiles.ggd[it]
-        for tag ∈ tags
-            quantity_str = getproperty(quantity_str, Symbol(tag))
-        end
 
-        midplane_cell_centers, quantity = project_prop_on_subset!(
-            quantity_str,
-            cell_subset,
-            midplane_subset,
-            space;
-            TPS_mats=TPS_mats,
-        )
+    mcc_qty = project_prop_on_subset!(
+        dd.edge_profiles.ggd,
+        quantity_name,
+        cell_subset,
+        midplane_subset;
+        value_field,
+        TPS_mats)
+
+    for it ∈ 1:nt
+        midplane_cell_centers, quantity = mcc_qty[it]
         # Now quantity is at the outboard midplane
 
         # Get the rho values to go with the midplane quantity values
@@ -239,7 +238,9 @@ function fill_in_extrapolated_core_profile!(
             Interpolations.linear_interpolation(
                 psi1_eq,
                 rho1_eq,
-            ).(psi_for_quantity[in_bounds])
+            ).(
+                psi_for_quantity[in_bounds],
+            )
 
         # Make sure the output 1D rho grid exists; create it if needed
         if IMAS.ismissing(dd.core_profiles.profiles_1d[it].grid, :rho_tor_norm)
@@ -260,7 +261,7 @@ function fill_in_extrapolated_core_profile!(
         end
         parent = dd.core_profiles.profiles_1d[it]
         tags = split(quantity_name, ".")
-        for tag ∈ tags[1:end-1]
+        for tag ∈ tags[1:(end-1)]
             parent = getproperty(parent, Symbol(tag))
         end
         setproperty!(parent, Symbol(tags[end]), quantity_core)
@@ -415,7 +416,7 @@ function mesh_psi_spacing(
         end
     else
         if avoid_guard_cell
-            dpsin = diff(psin[2:end-1])
+            dpsin = diff(psin[2:(end-1)])
         else
             dpsin = diff(psin)
         end

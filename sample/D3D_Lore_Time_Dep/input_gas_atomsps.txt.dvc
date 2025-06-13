@@ -1,0 +1,12 @@
+md5: 625ffa07ec8b07be8d65c190fc7e6493
+frozen: true
+deps:
+- path: D3D_Lore_Time_Dep/input_gas_atomsps.txt
+  repo:
+    url: git@github.com:ProjectTorreyPines/SOLPSTestSamples.git
+    rev_lock: 34463adc4d9b452712c39a52654dd8894af37820
+outs:
+- md5: d731f64bcce6c9e656d11513503fd72f
+  size: 25490
+  hash: md5
+  path: input_gas_atomsps.txt

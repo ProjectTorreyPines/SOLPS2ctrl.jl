@@ -169,7 +169,7 @@ function add_rho_to_equilibrium!(dd::IMAS.dd)
                 z1i = Interpolations.linear_interpolation(r1, z1)
                 z2i = Interpolations.linear_interpolation(r2, z2)
                 rr = LinRange(rmin, rmax, 101)
-                rc = (rr[1:end-1] + rr[2:end]) / 2.0
+                rc = (rr[1:(end-1)] + rr[2:end]) / 2.0
                 integral_part_ = [
                     log(rr[i+1] / rr[i]) * abs(z1i(rc[i]) - z2i(rc[i])) for
                     i ∈ 1:length(rc)

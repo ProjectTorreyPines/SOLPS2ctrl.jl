@@ -71,6 +71,16 @@ mesh_psi_spacing
 cached_mesh_extension!
 ```
 
+## System identification and modeling
+
+```@docs
+offset_scale
+unscale_unoffset
+system_id
+system_id_optimal_input_cond
+model_evolve
+```
+
 ## Unit conversion utilities
 
 ```@docs
