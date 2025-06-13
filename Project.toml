@@ -1,7 +1,7 @@
 name = "SOLPS2ctrl"
 uuid = "a531d12f-ac8a-43e8-b6d9-bd121431dd49"
 authors = ["David Eldon <eldond@fusion.gat.com>"]
-version = "2.1.0"
+version = "2.2.0"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
