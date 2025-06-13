@@ -564,19 +564,23 @@ if args["system_id"]
             return ret_vec
         end
 
+        # verbose only during CI testinf
+        verbose = get(ENV, "JULIA_CI", "false") == "true"
+
         # Third order linear fit of the model
         linear_plant_3 = SOLPS2ctrl.system_id(
             input_gas, ne_uniform, tt, 3;
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
+            verbose,
         )
 
         # Non-linear input + 3rd order linear fit
         nonlin_plant_3, p_opt = system_id_optimal_input_cond(
-            input_gas, ne_uniform, tt, 3;
+            input_gas, ne_uniform, tt, 3, inp_cond, Dict{Symbol, Any}(:p => -0.2);
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
-            input_cond=inp_cond, input_cond_args_guess=Dict{Symbol, Any}(:p => -0.2),
+            verbose,
         )
 
         lin_out = model_evolve(
