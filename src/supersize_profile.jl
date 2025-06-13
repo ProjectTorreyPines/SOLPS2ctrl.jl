@@ -7,7 +7,6 @@ using IMASggd:
     IMASggd, get_grid_subset, add_subset_element!, get_subset_boundary,
     project_prop_on_subset!, get_subset_centers, get_TPS_mats, subset_do,
     all__grid_subset_prop
-using PolygonOps: PolygonOps
 using JSON: JSON
 
 export extrapolate_core,
@@ -964,7 +963,6 @@ function cached_mesh_extension!(
         data["nlvl"] = nlvl
         data["r"] = mesh_r
         data["z"] = mesh_z
-        # YAML.write_file(cached_ext_name, data)
         open(cached_ext_name, "w") do f
             return JSON.print(f, data)
         end
