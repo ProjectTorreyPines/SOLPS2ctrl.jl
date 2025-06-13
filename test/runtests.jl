@@ -565,7 +565,7 @@ if args["system_id"]
         end
 
         # verbose only during CI testinf
-        verbose = get(ENV, "JULIA_CI", "false") == "true"
+        verbose = get(ENV, "GITHUB_ACTIONS", "") == "true"
 
         # Third order linear fit of the model
         linear_plant_3 = SOLPS2ctrl.system_id(
