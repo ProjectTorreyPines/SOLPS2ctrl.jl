@@ -106,14 +106,20 @@ function system_id(
 
     id_data = iddata(v, u, tt[2] - tt[1])
 
+    # Following suppression of stdout and stderr is because of this issue
+    # in newpem.
+    # https://github.com/baggepinnen/ControlSystemIdentification.jl/issues/184
+    # Once this issue has been resolved, we should only suppress stdout
+    original_stdout = stdout
+    original_stderr = stderr
     if !verbose
         redirect_stdout(devnull)
         redirect_stderr(devnull)
     end
     sys = newpem(id_data, order; newpem_kwargs...).sys
     if !verbose
-        redirect_stdout(stdout)
-        redirect_stderr(stderr)
+        redirect_stdout(original_stdout)
+        redirect_stderr(original_stderr)
     end
     return sys
 end
