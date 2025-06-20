@@ -11,6 +11,7 @@ using ArgParse: ArgParse
 using IMASggd: IMASggd, get_grid_subset
 using DelimitedFiles: readdlm
 using Statistics: mean
+using ControlSystemsBase: lsim, ssrand
 
 function parse_commandline()
     # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
@@ -41,6 +42,9 @@ function parse_commandline()
             :action => :store_true),
         ["--system_id"],
         Dict(:help => "Test only system identification",
+            :action => :store_true),
+        ["--state_pred"],
+        Dict(:help => "Test only state prediction",
             :action => :store_true),
     )
     args = ArgParse.parse_args(localARGS, s)
@@ -598,5 +602,54 @@ if args["system_id"]
         @test sqrt(mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
 
         @test sqrt(mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
+    end
+end
+
+if args["state_pred"]
+    @testset "state_pred" begin
+        nu = rand(1:10, 1)[1]
+        ny = rand(1:nu, 1)[1]
+        nstates = rand(1:10, 1)[1]
+        hh = rand(nstates:20, 1)[1]
+        rnd_model = ssrand(ny, nu, nstates;
+            proper=false,
+            stable=true,
+            Ts=0.001,
+        )
+        LL, MM, NN, OO = SOLPS2ctrl._calculate_LMNO(rnd_model, hh)
+
+        x0 = rand(Float64, size(rnd_model.A, 1))
+        test_u = randn((size(rnd_model.B, 2), hh))
+        test_y, _, test_x, _ = lsim(rnd_model, test_u; x0)
+        final_x = rnd_model.A * test_x[:, end] + rnd_model.B * test_u[:, end]
+
+        test_U = zeros(size(rnd_model.B, 2) * hh)
+        test_Y = zeros(size(rnd_model.C, 1) * hh)
+        for i ∈ 1:hh
+            test_U[(size(rnd_model.B, 2)*(i-1)+1):(size(rnd_model.B, 2)*i)] =
+                test_u[:, i]
+            test_Y[(size(rnd_model.C, 1)*(i-1)+1):(size(rnd_model.C, 1)*i)] =
+                test_y[:, i]
+        end
+        test_est_Y = LL * x0 + MM * test_U
+        test_est_x = NN * x0 + OO * test_U
+
+        println(sqrt(mean((test_est_Y - test_Y) .^ 2)))
+        println(sqrt(mean((test_est_x - final_x) .^ 2)))
+        @test isapprox(test_est_Y, test_Y)
+        @test isapprox(test_est_x, final_x)
+
+        noise_scale = 1e-3
+
+        set_u_off = randn() * noise_scale
+        test_U_mod = test_U .+ set_u_off
+
+        set_y_off = randn() * noise_scale
+        test_Y_mod = test_Y .+ set_y_off
+
+        YY2x, UU2x = state_prediction_matrices(rnd_model, hh)
+        test_est_x2 = YY2x * test_Y_mod + UU2x * test_U_mod
+        println(sqrt(mean((test_est_x2 - final_x) .^ 2)))
+        @test isapprox(test_est_x2, final_x; rtol=noise_scale)
     end
 end
