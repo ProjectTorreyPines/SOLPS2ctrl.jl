@@ -580,7 +580,7 @@ if args["system_id"]
         )
 
         # Non-linear input + 3rd order linear fit
-        nonlin_plant_3, p_opt = system_id_optimal_input_cond(
+        nonlin_plant_3, p_opt = system_id_optimal_inp_cond(
             input_gas, ne_uniform, tt, 3, inp_cond, Dict{Symbol, Any}(:p => -0.2);
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
@@ -597,7 +597,7 @@ if args["system_id"]
             nonlin_plant_3, input_gas;
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
-            input_cond=inp_cond, input_cond_kwargs=p_opt)
+            inp_cond=inp_cond, inp_cond_kwargs=p_opt)
 
         @test sqrt(mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
 
