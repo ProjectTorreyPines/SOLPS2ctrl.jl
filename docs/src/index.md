@@ -77,11 +77,33 @@ cached_mesh_extension!
 offset_scale
 unscale_unoffset
 system_id
-system_id_optimal_input_cond
+system_id_optimal_inp_cond
 model_evolve
 ```
 
+## Actuators
+
+```@docs
+Actuator
+DelayedActuator
+```
+For example:
+```@example
+using SOLPS2ctrl: DelayedActuator
+# Actuator with delay of 3 steps
+dact = DelayedActuator(3; default_output=[0.0, 0.0])
+inp_series = [ones(2) * i * 0.1 for i in 1:6]
+for (i, inp) in enumerate(inp_series)
+    println("Calling $(i)th time, return value is $(dact(inp))")
+end
+```
+
 ## Controllers
+
+```@docs
+Controller
+LinearController
+```
 
 ```@docs
 state_prediction_matrices
@@ -218,6 +240,13 @@ Then, future state can be predicted by:
 
 ```math
 x_{k+1} = \mathcal{N} \mathcal{L}^{-1} (\vec{Y} - \mathcal{M} \vec{U}) + \mathcal{O} \vec{U}
+```
+
+## Closed loop simulations
+
+```@docs
+lsim_step
+model_step
 ```
 
 ## Unit conversion utilities

@@ -11,7 +11,7 @@ using ArgParse: ArgParse
 using IMASggd: IMASggd, get_grid_subset
 using DelimitedFiles: readdlm
 using Statistics: mean
-using ControlSystemsBase: lsim, ssrand
+using ControlSystemsBase: lsim, ssrand, tf, c2d, ss, pid, margin
 
 function parse_commandline()
     # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
@@ -45,6 +45,9 @@ function parse_commandline()
             :action => :store_true),
         ["--state_pred"],
         Dict(:help => "Test only state prediction",
+            :action => :store_true),
+        ["--controller"],
+        Dict(:help => "Test only controllers",
             :action => :store_true),
     )
     args = ArgParse.parse_args(localARGS, s)
@@ -651,5 +654,86 @@ if args["state_pred"]
         test_est_x2 = YY2x * test_Y_mod + UU2x * test_U_mod
         println(sqrt(mean((test_est_x2 - final_x) .^ 2)))
         @test isapprox(test_est_x2, final_x; rtol=noise_scale)
+    end
+end
+
+if args["controller"]
+    @testset "controller" begin
+        # Random 2-pole plant model with resonance between 100 and 200 Hz
+        # and Q value between 10 to 30 and a gain of 3.0
+        s = tf('s')
+        imp = rand(200.0:0.001:300.0)
+        rep = rand(-20:0.001:-10)
+        abs2 = rep^2 + imp^2
+        den = s^2 - 2 * rep * s + abs2
+        Ts = 0.001 # Sampling period of discrete system
+        plant_model = c2d(ss(abs2 * 3 / den), Ts)
+
+        # Define an actuator for the plant model
+        # Actuator must be a mutable struct and daughter of Actuator type
+        mutable struct TestAct <: Actuator
+            latency::DelayedActuator
+            gain::Float64
+        end
+        # And all actuators must be callable
+        # Here we make this a simple gain actuator with some latency
+        (ta::TestAct)(inp::Vector{Float64}) = ta.latency(inp .* ta.gain)
+        # Now create an instance of this actuator with gain 5 and delay of 10 time steps
+        act = TestAct(DelayedActuator(10), 5.0)
+
+        # Finally, design a linear controller using pid
+        lc = LinearController(c2d(ss(pid(0.1, 0.1 / 10)), Ts), zeros(Float64, 1))
+
+        # Reduce controller gain to ensure stability
+        w = collect(logrange(0.1, 1e3, 400))
+        pm = -200
+        gm = -1
+        while pm < 45 || gm < 3
+            wgm, gm, wpm, pm = margin(plant_model * act.gain * lc.ctrl_ss, w)
+            pm = pm[1, 1, 1]
+            gm = gm[1, 1, 1]
+            if pm < 45 || gm < 3
+                lc.ctrl_ss *= 0.9 # Reduce gain slightly
+            end
+        end
+
+        # Set a target waveform
+        tt = collect(0:Ts:2)
+        set_points_tt = [0.0, 0.1, 0.5, 0.7, 1.3, 1.5, 1.7, 2.0]
+        set_points = [0.0, 0.0, 1.0, 1.0, -0.5, -0.5, 0.0, 0.0]
+        target = Interpolations.linear_interpolation(set_points_tt, set_points).(tt)
+
+        # Run closed loop simulation
+        res = run_closed_loop_sim(plant_model, act, lc, target)
+
+        p1 = plot(tt, res[:target][1, :]; color=:black, label="Target", linestyle=:dash)
+        plot!(
+            tt, res[:plant_out][1, :];
+            linewidth=2, color=:deepskyblue3,
+            label="PI", ylabel="Plant Output", xformatter=_ -> "", topmargin=10Plots.mm,
+        )
+        p2 = plot(
+            tt, res[:plant_inp][1, :];
+            linewidth=2, color=:deepskyblue3,
+            label="PI", ylabel="Plant Input", xformatter=_ -> "",
+        )
+        p3 = plot(
+            tt, res[:ctrl_out][1, :];
+            linewidth=2, color=:deepskyblue3,
+            label="PI", ylabel="Controller\nOutput", xlabel="Time / s",
+        )
+        l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
+        plot(
+            p1, p2, p3;
+            layout=l,
+            suptitle=(
+                "Closed Loop Simulation Results\n" *
+                "Actuator has delay of $(act.latency.delay * Ts)s."
+            ),
+        )
+
+        savefig("$(@__DIR__)/Closed_Loop_Sim_Results.pdf")
+
+        @test mean((res[:target][1, :] .- res[:plant_out][1, :]) .^ 2) < 0.1
     end
 end

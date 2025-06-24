@@ -4,8 +4,17 @@ import LinearAlgebra: pinv
 using DataStructures: Queue, enqueue!, dequeue!
 # import ControlSystemsBase: lsim, ss, pid, d2c_exact, d2c, StateSpace
 
-export lsim_step, state_prediction_matrices
+export lsim_step, model_step, state_prediction_matrices, Actuator, DelayedActuator,
+    Controller, LinearController, PVLC, run_closed_loop_sim
 
+"""
+    lsim_step(
+        sys::Union{PredictionStateSpace, StateSpace}, u::Vector{Float64};
+        x0::Vector{Float64}=zeros(size(sys.A, 1)),
+    )::Tuple{Vector{Float64}, Vector{Float64}}
+
+Single step version of [ControlSystemsBase.lsim](https://juliacontrol.github.io/ControlSystems.jl/dev/lib/timefreqresponse/#ControlSystemsBase.lsim-Tuple%7BAbstractStateSpace,%20AbstractVecOrMat,%20AbstractVector%7D)
+"""
 function lsim_step(
     sys::Union{PredictionStateSpace, StateSpace}, u::Vector{Float64};
     x0::Vector{Float64}=zeros(size(sys.A, 1)),
@@ -15,6 +24,19 @@ function lsim_step(
     return y, x
 end
 
+"""
+    model_step(
+        sys::Union{PredictionStateSpace, StateSpace},
+        inp::Vector{Float64};
+        x0::Vector{Float64}=zeros(size(sys.A, 1)),
+        inp_cond::Union{Nothing, Function}=nothing,
+        inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+        out_offset::Float64=0.0, out_factor::Float64=1.0,
+        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+    )::Tuple{Vector{Float64}, Vector{Float64}} where {T}
+
+Single step version of [`model_evolve()`](@ref).
+"""
 function model_step(
     sys::Union{PredictionStateSpace, StateSpace},
     inp::Vector{Float64};
@@ -23,12 +45,12 @@ function model_step(
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
     inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
-)::Vector{Float64} where {T}
+)::Tuple{Vector{Float64}, Vector{Float64}} where {T}
     inp_so = offset_scale(inp; offset=inp_offset, factor=inp_factor)
     if !isnothing(inp_cond)
         inp_so = inp_cond(inp_so; inp_cond_kwargs...)
     end
-    modeled_out_so, _, x0, _ = lsim_step(sys, u; x0)
+    modeled_out_so, x0 = lsim_step(sys, inp_so; x0)
     modeled_out = unscale_unoffset(modeled_out_so; offset=out_offset, factor=out_factor)
     return modeled_out, x0
 end
@@ -102,72 +124,132 @@ function state_prediction_matrices(
     return Y2x, U2x
 end
 
-# function latency_jump_part(
-#     future_flow_rates::Vector{Float64}, ssm::PredictionStateSpace,
-#     fut_x0::Vector{Float64};
-#     gas_offset::Float64=gas_offset, gas_factor::Float64=gas_factor,
-#     boltzmann_k::Float64=1.380649e-23, Temp::Float64=300.0,
-# )::Tuple{Float64, Vector{Float64}}
-#     fut_gas_atomps = gas_SI_to_aps(future_flow_rates; boltzmann_k, Temp)
-#     fut_gas_atomsps_scaled = zeros((1, length(fut_gas_atomps)))
-#     fut_gas_atomsps_scaled[1, :] =
-#         gas_offset_scale(fut_gas_atomps; gas_offset, gas_factor)
-#     y_int, _, post_lat_x0, _ = lsim(ssm, fut_gas_atomsps_scaled; x0=fut_x0)
-#     fut_meas_hf = y_int[1, end]
-#     return fut_meas_hf, post_lat_x0[:, end]
-# end
+"""
+    Actuator
 
+Abstract parent type for all actuators. Whenever a user defined actuator is created,
+it must be subtype of `Actuator`.
+
+To create a new actuator with custom function, it must be defined as a mutable stucture
+which is daughter of Actuator that contains all settings and state information for
+the actuator and the instance itself should be callable to take as input a
+`Vector{Float64}` and should return an output of `Vector{Float64}`.
+
+```julia
+mutable struct CustomActuator <: Actuator
+    settings
+    state
+    # ... Anything more
+end
+
+function (ca::CustomActuator)(inp::Vector{Float64})::Vector{Float64}
+    # perform the actuation calcualtions with inp
+    # update ca.state if required
+    return output
+end
+```
+
+**NOTE:** If you need to add a delay in the actuator, add a [`DelayedActuator`](@ref)
+instance in the attributes of your `CustomActuator` and just call the DelayedActuator
+inside your function call.
+"""
 abstract type Actuator end
 
+"""
+    DelayedActuator{U}
+
+Implementation of delayed actuation. It stores `delay::Int` for number of time steps of
+delay and `buffer::Queue{U}` which stores the delayed actuations in a queue.
+Constructor:
+
+    DelayedActuator(
+        delay::Int;
+        default_output::T=[0.0],
+    ) where {T}
+
+Creates a DelayedActuator{T} instance with `delay` and initializes the `buffer`
+pre-filled upto brim with the default_output.
+"""
 mutable struct DelayedActuator{U} <: Actuator
     delay::Int
-    default_output::U
     buffer::Queue{U}
     function DelayedActuator(
         delay::Int;
-        default_output::T=0.0,
-    ) where {T <: Union{Float64, Vector{Float64}}}
-        return new{T}(delay, default_output, Queue{T}(delay))
-    end
-end
-
-function (da::DelayedActuator)(inp::Union{Float64, Vector{Float64}})
-    enqueue!(da.buffer, inp)
-    if length(da.buffer) <= da.delay
-        return da.default_output
-    else
-        return dequeue!(da.buffer)
-    end
-end
-
-get_T(::DelayedActuator{T}) where {T} = T
-
-function has_delay(act::Actuator)
-    for fieldname ∈ fieldnames(act)
-        if isa(fieldtype(act, fieldname), DelayedActuator)
-            return true
+        default_output::T=[0.0],
+    ) where {T}
+        buffer = Queue{T}(delay)
+        for i ∈ 1:delay
+            enqueue!(buffer, default_output)
         end
+        return new{T}(delay, buffer)
     end
-    return false
+end
+
+function (da::DelayedActuator)(inp::Union{Float64, Vector{Float64}})::Vector{Float64}
+    enqueue!(da.buffer, inp)
+    return dequeue!(da.buffer)
 end
 
 function get_future_inp(act::Actuator)
-    for fieldname ∈ fieldnames(act)
-        if isa(fieldtype(act, fieldname), DelayedActuator)
-            return collect(getfield(act, fieldname).buffer)
+    for fieldname ∈ fieldnames(typeof(act))
+        if fieldtype(typeof(act), fieldname) == DelayedActuator
+            return get_future_inp(getfield(act, fieldname))
         end
     end
     return Matrix{Float64}(undef, 0, 0)
 end
 
+get_future_inp(act::DelayedActuator) = collect(act.buffer)
+
+"""
+    Controller
+
+Abstract parent type for all controllers. Whenever a user defined controller is created
+it must be a subtype of `Controller`.
+
+To create a new controller algorithm, it should be defined as a mutable structure that
+is a daughter of `Controller` and should contain all settings and state information to
+be stored. It must be a callable structure that can use any of the following keyword
+arguments:
+
+  - `ii::Int`: Iteration index
+  - `target::Matrix{Float64}`: Target waveform (No. of signals x Time steps)
+  - `plant_inp::Matrix{Float64}`: Inputs to plant (No. of inputs x Time steps)
+  - `plant_out::Matrix{Float64}`: Outputs from plant (No. of outputs x Time steps)
+  - `future_inp::Matrix{Float64}`: Upcoming future known inputs to plant (for delayed actuators) (No. of outputs x Time steps)
+  - `inp_offset::Float64`: Input offset for plant input
+  - `inp_factor::Float64`: Input factor for plant input
+  - `out_offset::Float64`: Output offset for plant output
+  - `out_factor::Float64`: Output factor for plant output
+  - `kwargs..`: Required to ignore unused keyword arguments
+"""
 abstract type Controller end
 
-mutable struct linear_controller <: Controller
-    ctrl_ss::StateSpace{Discrete}
+"""
+    LinearController
+
+Implementation for using any linear controller. It stores
+`ctrl_ss::StateSpace{TE} where {TE <: Discrete}` for storing any linear controller as a
+discrete state space model using [ControlSystemsBase.ss](https://juliacontrol.github.io/ControlSystems.jl/dev/man/creating_systems/#State-Space-Systems).
+It also stoes the state vector for the state space model as `ctrl_x0::Vector{Float64}`.
+It's call signature is:
+
+    (lc::LinearController)(;
+        ii::Int,
+        target::Matrix{Float64},
+        plant_out::Matrix{Float64},
+        kwargs...,
+    )::Vector{Float64}
+
+Calcualtes error as `target[:, ii] .- plant_out[:, ii]` and runs it through
+[`lsim_step()`](@ref).
+"""
+mutable struct LinearController <: Controller
+    ctrl_ss::StateSpace{TE} where {TE <: Discrete}
     ctrl_x0::Vector{Float64}
 end
 
-function (lc::linear_controller)(;
+function (lc::LinearController)(;
     ii::Int,
     target::Matrix{Float64},
     plant_out::Matrix{Float64},
@@ -179,18 +261,18 @@ function (lc::linear_controller)(;
 end
 
 mutable struct PVLC <: Controller
-    ctrl_ss::StateSpace{Discrete}
+    ctrl_ss::StateSpace{TE} where {TE <: Discrete}
     ctrl_x0::Vector{Float64}
     h::Int
     plant_model::Union{PredictionStateSpace, StateSpace}
     Y2x::Matrix{Float64}
     U2x::Matrix{Float64}
     function PVLC(
-        ctrl_ss::StateSpace{Discrete},
+        ctrl_ss::StateSpace{TE},
         ctrl_x0::Vector{Float64},
         plant_model::Union{PredictionStateSpace, StateSpace},
         h::Int=size(sys.A, 1),
-    )
+    ) where {TE <: Discrete}
         Y2x, U2x = state_prediction_matrices(plant_model, h)
         return new(ctrl_ss, ctrl_x0, plant_model, h, Y2x, U2x)
     end
@@ -228,7 +310,7 @@ function (pvlc::PVLC)(;
 end
 
 function run_closed_loop_sim(
-    plant_model::Union{PredictionStateSpace, StateSpace},
+    plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
     act::Actuator,
     ctrl::Controller,
     target::Union{Vector{Float64}, Matrix{Float64}};
@@ -241,7 +323,7 @@ function run_closed_loop_sim(
         (size(plant_model.B, 2), length(target)),
     ),
     ctrl_start_ind::Int=1,
-) where {T}
+) where {T, TE <: Discrete}
     if isa(target, Vector)
         if size(plant_model.C, 1) == 1
             target = Matrix(target')
@@ -249,15 +331,15 @@ function run_closed_loop_sim(
             error("Plant has multiple outputs, target must be Matrix")
         end
     end
-    ctrl_out = zeros(Float64, size(inp_feedforward, 1))
+    ctrl_out = zeros(Float64, size(inp_feedforward))
     plant_inp = zeros(Float64, (size(plant_model.B, 2), length(target)))
     plant_out = zeros(Float64, (size(plant_model.C, 1), length(target)))
     x0 =
         inv(Matrix{Float64}(I, size(plant_model.A)...) - plant_model.A) *
         plant_model.B * inp_feedforward[:, 1]
     for ii ∈ eachindex(target)
-        plant_inp[:, ii] = act(ctrl_out .+ inp_feedforward[:, ii])
-        plant_out[:, ii], _ = model_step(
+        plant_inp[:, ii] = act(ctrl_out[:, ii] .+ inp_feedforward[:, ii])
+        plant_out[:, ii], x0 = model_step(
             plant_model, plant_inp[:, ii];
             x0,
             inp_cond, inp_offset, inp_factor, out_offset, out_factor,
@@ -265,11 +347,28 @@ function run_closed_loop_sim(
         )
         # err = target[:, ii] .- plant_out[:, ii]
         future_inp = get_future_inp(act)
-        if ii >= ctrl_start_ind
-            ctrl_out = ctrl(;
+        if ii >= ctrl_start_ind && ii < length(target)
+            ctrl_out[:, ii+1] = ctrl(;
                 ii, target, plant_inp, plant_out, future_inp,
                 inp_offset, inp_factor, out_offset, out_factor,
             )
         end
     end
+    return Dict(
+        :plant_model => plant_model,
+        :act => act,
+        :ctrl => ctrl,
+        :target => target,
+        :inp_cond => inp_cond,
+        :inp_offset => inp_offset,
+        :inp_factor => inp_factor,
+        :out_offset => out_offset,
+        :out_factor => out_factor,
+        :inp_cond_kwargs => inp_cond_kwargs,
+        :inp_feedforward => inp_feedforward,
+        :ctrl_start_ind => ctrl_start_ind,
+        :plant_inp => plant_inp,
+        :plant_out => plant_out,
+        :ctrl_out => ctrl_out,
+    )
 end
