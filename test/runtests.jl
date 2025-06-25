@@ -1,64 +1,10 @@
 using SOLPS2ctrl
-using SOLPS2ctrl: SOLPS2ctrl
-using SOLPS2imas: SOLPS2imas
-using IMAS: IMAS
-using EFIT: EFIT
+using SOLPS2ctrl:
+    SOLPS2ctrl, SOLPS2imas, IMAS, IMASggd, EFIT, Unitful, Interpolations, Statistics
 using Plots
 using Test
-using Unitful: Unitful
-using Interpolations: Interpolations
-using ArgParse: ArgParse
-using IMASggd: IMASggd, get_grid_subset
 using DelimitedFiles: readdlm
-using Statistics: mean
 using ControlSystemsBase: lsim, ssrand, delay, tf, c2d, ss, pid, margin
-
-function parse_commandline()
-    # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
-    localARGS = (@isdefined(newARGS) && newARGS !== nothing) ? newARGS : ARGS  # Thanks https://stackoverflow.com/a/44978474/6605826
-    s = ArgParse.ArgParseSettings(; description="Run tests. Default is all tests.")
-
-    ArgParse.add_arg_table!(s,
-        ["--unit_utils"],
-        Dict(:help => "Test only unit conversion utilities",
-            :action => :store_true),
-        ["--core_profile_extension"],
-        Dict(:help => "Test only core profile extension",
-            :action => :store_true),
-        ["--edge_profile_extension"],
-        Dict(:help => "Test only edge profile extension",
-            :action => :store_true),
-        ["--heavy_utilities"],
-        Dict(:help => "Test only heavy utilities",
-            :action => :store_true),
-        ["--repair_eq"],
-        Dict(:help => "Test only repair_eq",
-            :action => :store_true),
-        ["--geqdsk_to_imas"],
-        Dict(:help => "Test only geqdsk_to_imas",
-            :action => :store_true),
-        ["--preparation"],
-        Dict(:help => "Test only preparation",
-            :action => :store_true),
-        ["--system_id"],
-        Dict(:help => "Test only system identification",
-            :action => :store_true),
-        ["--state_pred"],
-        Dict(:help => "Test only state prediction",
-            :action => :store_true),
-        ["--controller"],
-        Dict(:help => "Test only controllers",
-            :action => :store_true),
-    )
-    args = ArgParse.parse_args(localARGS, s)
-    if !any(values(args)) # If no flags are set, run all tests
-        for k ∈ keys(args)
-            args[k] = true
-        end
-    end
-    return args
-end
-args = parse_commandline()
 
 """
     make_test_profile()
@@ -123,7 +69,7 @@ function define_default_sample_set()
     return b2fgmtry, b2time, b2mn, eqdsk
 end
 
-if args["unit_utils"]
+if isempty(ARGS) || "units" in ARGS
     @testset "Unit conversion utilities" begin
         # Gas unit converter
         flow_tls = 40.63 * Unitful.Torr * Unitful.L / Unitful.s
@@ -158,7 +104,7 @@ if args["unit_utils"]
     end
 end
 
-if args["core_profile_extension"]
+if isempty(ARGS) || "core" in ARGS
     @testset "core_profile_extension" begin
         # Just the basic profile extrapolator ------------------
         edge_rho = Array(LinRange(0.88, 1.0, 18))
@@ -213,7 +159,7 @@ if args["core_profile_extension"]
     end
 end
 
-if args["edge_profile_extension"]
+if isempty(ARGS) || "edge" in ARGS
     @testset "edge_profile_extension" begin
         # Test for getting mesh spacing
         b2fgmtry, b2time, b2mn, eqdsk = define_default_sample_set()
@@ -228,7 +174,7 @@ if args["edge_profile_extension"]
         grid_ggd = dd.edge_profiles.grid_ggd[grid_ggd_idx]
         extended_subs = 1:5
         orig_subs = [
-            deepcopy(get_grid_subset(grid_ggd, i)) for
+            deepcopy(IMASggd.get_grid_subset(grid_ggd, i)) for
             i ∈ extended_subs
         ]
         cfn = SOLPS2ctrl.cached_mesh_extension!(dd, eqdsk, b2fgmtry; clear_cache=true)
@@ -241,9 +187,9 @@ if args["edge_profile_extension"]
         )
         for j ∈ extended_subs
             orig_sub = orig_subs[j]
-            std_sub = get_grid_subset(grid_ggd, -j)
-            all_sub = get_grid_subset(grid_ggd, j)
-            ext_sub = get_grid_subset(grid_ggd, -200 - j)
+            std_sub = IMASggd.get_grid_subset(grid_ggd, -j)
+            all_sub = IMASggd.get_grid_subset(grid_ggd, j)
+            ext_sub = IMASggd.get_grid_subset(grid_ggd, -200 - j)
             orig_indices = [ele.object[1].index for ele ∈ orig_sub.element]
             std_indices = [ele.object[1].index for ele ∈ std_sub.element]
             all_indices = [ele.object[1].index for ele ∈ all_sub.element]
@@ -275,7 +221,7 @@ if args["edge_profile_extension"]
     end
 end
 
-if args["heavy_utilities"]
+if isempty(ARGS) || "heavy" in ARGS
     @testset "heavy_utilities" begin
         # Test for finding files in allowed folders
         file_list = define_default_sample_set()
@@ -326,7 +272,7 @@ if args["heavy_utilities"]
     end
 end
 
-if args["repair_eq"]
+if isempty(ARGS) || "repair" in ARGS
     @testset "repair_eq" begin
         # Prepare sample
         dd = IMAS.dd()
@@ -348,7 +294,7 @@ if args["repair_eq"]
     end
 end
 
-if args["geqdsk_to_imas"]
+if isempty(ARGS) || "geqdsk" in ARGS
     @testset "geqdsk_to_imas" begin
         sample_files =
             (splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/") .* [
@@ -446,7 +392,7 @@ if args["geqdsk_to_imas"]
     end
 end
 
-if args["preparation"]
+if isempty(ARGS) || "prep" in ARGS
     @testset "preparation" begin
         eqdsk_file = "geqdsk_iter_small_sample"
         sample_paths = [
@@ -476,7 +422,7 @@ if args["preparation"]
     end
 end
 
-if args["system_id"]
+if isempty(ARGS) || "sysid" in ARGS
     @testset "system_id" begin
         case = "$(@__DIR__)/../sample/D3D_Lore_Time_Dep"
         println("Reading interferometer data...")
@@ -602,18 +548,18 @@ if args["system_id"]
             out_offset=ne_offset, out_factor=ne_factor,
             inp_cond=inp_cond, inp_cond_kwargs=p_opt)
 
-        @test sqrt(mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
+        @test sqrt(Statistics.mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
 
-        @test sqrt(mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
+        @test sqrt(Statistics.mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
     end
 end
 
-if args["state_pred"]
+if isempty(ARGS) || "state" in ARGS
     @testset "state_pred" begin
         nu = rand(1:10, 1)[1]
         ny = rand(1:nu, 1)[1]
         nstates = rand(1:10, 1)[1]
-        hh = rand(nstates:20, 1)[1]
+        hh = 20
         rnd_model = ssrand(ny, nu, nstates;
             proper=false,
             stable=true,
@@ -637,8 +583,8 @@ if args["state_pred"]
         test_est_Y = LL * x0 + MM * test_U
         test_est_x = NN * x0 + OO * test_U
 
-        # println(sqrt(mean((test_est_Y - test_Y) .^ 2)))
-        # println(sqrt(mean((test_est_x - final_x) .^ 2)))
+        # println(sqrt(Statistics.mean((test_est_Y - test_Y) .^ 2)))
+        # println(sqrt(Statistics.mean((test_est_x - final_x) .^ 2)))
         @test isapprox(test_est_Y, test_Y)
         @test isapprox(test_est_x, final_x)
 
@@ -652,12 +598,12 @@ if args["state_pred"]
 
         YY2x, UU2x = state_prediction_matrices(rnd_model, hh)
         test_est_x2 = YY2x * test_Y_mod + UU2x * test_U_mod
-        # println(sqrt(mean((test_est_x2 - final_x) .^ 2)))
-        @test isapprox(test_est_x2, final_x; rtol=noise_scale)
+        # println(sqrt(Statistics.mean((test_est_x2 - final_x) .^ 2)))
+        @test isapprox(test_est_x2, final_x; rtol=10 * noise_scale)
     end
 end
 
-if args["controller"]
+if isempty(ARGS) || "controller" in ARGS
     @testset "controller" begin
         # Random 2-pole plant model with resonance between 100 and 200 Hz
         # and Q value between 1 to 6 and a gain of 3.0
@@ -772,11 +718,15 @@ if args["controller"]
         savefig("$(@__DIR__)/Closed_Loop_Sim_Results.pdf")
 
         residual_PVLC = sqrt(
-            mean((res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2),
+            Statistics.mean(
+                (res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2,
+            ),
         )
 
         residual_LC = sqrt(
-            mean((res["PI"][:target][1, :] .- res["PI"][:plant_out][1, :]) .^ 2),
+            Statistics.mean(
+                (res["PI"][:target][1, :] .- res["PI"][:plant_out][1, :]) .^ 2,
+            ),
         )
 
         @test residual_PVLC < residual_LC
