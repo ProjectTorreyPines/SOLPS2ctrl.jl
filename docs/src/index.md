@@ -105,11 +105,14 @@ Controller
 LinearController
 ```
 
+### Predicted Variable Linear Controller
+
 ```@docs
+PVLC
 state_prediction_matrices
 ```
 
-### State Prediction Matrix Algebra
+#### State Prediction Matrix Algebra
 
 At step k:
 
@@ -247,6 +250,7 @@ x_{k+1} = \mathcal{N} \mathcal{L}^{-1} (\vec{Y} - \mathcal{M} \vec{U}) + \mathca
 ```@docs
 lsim_step
 model_step
+run_closed_loop_sim
 ```
 
 ## Unit conversion utilities

@@ -11,7 +11,7 @@ using ArgParse: ArgParse
 using IMASggd: IMASggd, get_grid_subset
 using DelimitedFiles: readdlm
 using Statistics: mean
-using ControlSystemsBase: lsim, ssrand, tf, c2d, ss, pid, margin
+using ControlSystemsBase: lsim, ssrand, delay, tf, c2d, ss, pid, margin
 
 function parse_commandline()
     # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
@@ -637,8 +637,8 @@ if args["state_pred"]
         test_est_Y = LL * x0 + MM * test_U
         test_est_x = NN * x0 + OO * test_U
 
-        println(sqrt(mean((test_est_Y - test_Y) .^ 2)))
-        println(sqrt(mean((test_est_x - final_x) .^ 2)))
+        # println(sqrt(mean((test_est_Y - test_Y) .^ 2)))
+        # println(sqrt(mean((test_est_x - final_x) .^ 2)))
         @test isapprox(test_est_Y, test_Y)
         @test isapprox(test_est_x, final_x)
 
@@ -652,7 +652,7 @@ if args["state_pred"]
 
         YY2x, UU2x = state_prediction_matrices(rnd_model, hh)
         test_est_x2 = YY2x * test_Y_mod + UU2x * test_U_mod
-        println(sqrt(mean((test_est_x2 - final_x) .^ 2)))
+        # println(sqrt(mean((test_est_x2 - final_x) .^ 2)))
         @test isapprox(test_est_x2, final_x; rtol=noise_scale)
     end
 end
@@ -660,14 +660,16 @@ end
 if args["controller"]
     @testset "controller" begin
         # Random 2-pole plant model with resonance between 100 and 200 Hz
-        # and Q value between 10 to 30 and a gain of 3.0
+        # and Q value between 1 to 6 and a gain of 3.0
         s = tf('s')
         imp = rand(200.0:0.001:300.0)
-        rep = rand(-20:0.001:-10)
+        rep = rand(-200:0.001:-50)
         abs2 = rep^2 + imp^2
         den = s^2 - 2 * rep * s + abs2
         Ts = 0.001 # Sampling period of discrete system
         plant_model = c2d(ss(abs2 * 3 / den), Ts)
+        delay_steps = 100
+        delay_model = delay(delay_steps * Ts, Ts)
 
         # Define an actuator for the plant model
         # Actuator must be a mutable struct and daughter of Actuator type
@@ -679,21 +681,39 @@ if args["controller"]
         # Here we make this a simple gain actuator with some latency
         (ta::TestAct)(inp::Vector{Float64}) = ta.latency(inp .* ta.gain)
         # Now create an instance of this actuator with gain 5 and delay of 10 time steps
-        act = TestAct(DelayedActuator(10), 5.0)
+        act = TestAct(DelayedActuator(delay_steps), 5.0)
 
         # Finally, design a linear controller using pid
         lc = LinearController(c2d(ss(pid(0.1, 0.1 / 10)), Ts), zeros(Float64, 1))
 
-        # Reduce controller gain to ensure stability
+        # Reduce controller gain to ensure stability taking into account the delay
         w = collect(logrange(0.1, 1e3, 400))
         pm = -200
         gm = -1
-        while pm < 45 || gm < 3
-            wgm, gm, wpm, pm = margin(plant_model * act.gain * lc.ctrl_ss, w)
+        while pm < 30 || gm < 3
+            wgm, gm, wpm, pm =
+                margin(plant_model * act.gain * delay_model * lc.ctrl_ss, w)
             pm = pm[1, 1, 1]
             gm = gm[1, 1, 1]
-            if pm < 45 || gm < 3
+            if pm < 30 || gm < 3
                 lc.ctrl_ss *= 0.9 # Reduce gain slightly
+            end
+        end
+
+        # Create PVLC and another instance of actuator for this run
+        pvlc = PVLC(c2d(ss(pid(1.0, 1.0 / 10)), Ts), zeros(Float64, 1), plant_model, 20)
+        act2 = TestAct(DelayedActuator(delay_steps), 5.0)
+
+        # Tune PVLC controller for no delay
+        pm = -200
+        gm = -1
+        while pm < 30 || gm < 3
+            w = collect(logrange(0.1, 1e3, 400))
+            wgm, gm, wpm, pm = margin(plant_model * act2.gain * pvlc.ctrl_ss, w)
+            pm = pm[1, 1, 1]
+            gm = gm[1, 1, 1]
+            if pm < 30 || gm < 3
+                pvlc.ctrl_ss *= 0.9
             end
         end
 
@@ -704,23 +724,40 @@ if args["controller"]
         target = Interpolations.linear_interpolation(set_points_tt, set_points).(tt)
 
         # Run closed loop simulation
-        res = run_closed_loop_sim(plant_model, act, lc, target)
+        res = Dict()
+        res["PI"] = run_closed_loop_sim(plant_model, act, lc, target)
+        res["PVLC"] = run_closed_loop_sim(plant_model, act2, pvlc, target)
 
-        p1 = plot(tt, res[:target][1, :]; color=:black, label="Target", linestyle=:dash)
+        p1 = plot(
+            tt, res["PI"][:target][1, :];
+            label="Target", linestyle=:dash, color=:black,
+        )
         plot!(
-            tt, res[:plant_out][1, :];
-            linewidth=2, color=:deepskyblue3,
-            label="PI", ylabel="Plant Output", xformatter=_ -> "", topmargin=10Plots.mm,
+            tt, res["PI"][:plant_out][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:plant_out][1, :];
+            label="PVLC", ylabel="Plant Output", xformatter=_ -> "",
+            linewidth=2, color=:orange,
         )
         p2 = plot(
-            tt, res[:plant_inp][1, :];
-            linewidth=2, color=:deepskyblue3,
-            label="PI", ylabel="Plant Input", xformatter=_ -> "",
+            tt, res["PI"][:plant_inp][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:plant_inp][1, :];
+            label="PVLC", ylabel="Plant Input", xformatter=_ -> "",
+            linewidth=2, color=:orange,
         )
         p3 = plot(
-            tt, res[:ctrl_out][1, :];
-            linewidth=2, color=:deepskyblue3,
-            label="PI", ylabel="Controller\nOutput", xlabel="Time / s",
+            tt, res["PI"][:ctrl_out][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:ctrl_out][1, :];
+            label="PVLC", ylabel="Controller\nOutput", xlabel="Time / s",
+            linewidth=2, color=:orange,
         )
         l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
         plot(
@@ -734,6 +771,14 @@ if args["controller"]
 
         savefig("$(@__DIR__)/Closed_Loop_Sim_Results.pdf")
 
-        @test mean((res[:target][1, :] .- res[:plant_out][1, :]) .^ 2) < 0.1
+        residual_PVLC = sqrt(
+            mean((res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2),
+        )
+
+        residual_LC = sqrt(
+            mean((res["PI"][:target][1, :] .- res["PI"][:plant_out][1, :]) .^ 2),
+        )
+
+        @test residual_PVLC < residual_LC
     end
 end

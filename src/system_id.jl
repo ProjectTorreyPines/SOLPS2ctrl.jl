@@ -163,7 +163,7 @@ function model_evolve(
     end
     modeled_out_so, _, x0, _ = lsim(sys, u; x0)
     modeled_out = unscale_unoffset(modeled_out_so; offset=out_offset, factor=out_factor)
-    if size(modeled_out)[1] == 1
+    if isa(inp, Vector)
         return modeled_out[1, :]
     else
         return modeled_out

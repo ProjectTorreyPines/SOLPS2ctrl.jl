@@ -199,7 +199,7 @@ function get_future_inp(act::Actuator)
     return Matrix{Float64}(undef, 0, 0)
 end
 
-get_future_inp(act::DelayedActuator) = collect(act.buffer)
+get_future_inp(act::DelayedActuator) = stack(act.buffer)
 
 """
     Controller
@@ -231,7 +231,7 @@ abstract type Controller end
 Implementation for using any linear controller. It stores
 `ctrl_ss::StateSpace{TE} where {TE <: Discrete}` for storing any linear controller as a
 discrete state space model using [ControlSystemsBase.ss](https://juliacontrol.github.io/ControlSystems.jl/dev/man/creating_systems/#State-Space-Systems).
-It also stoes the state vector for the state space model as `ctrl_x0::Vector{Float64}`.
+It also stores the state vector for the state space model as `ctrl_x0::Vector{Float64}`.
 It's call signature is:
 
     (lc::LinearController)(;
@@ -260,18 +260,54 @@ function (lc::LinearController)(;
     return ctrl_out
 end
 
+"""
+    PVLC
+
+Implementation of Predicted Variable Linear Controller (PVLC). It stores
+`ctrl_ss::StateSpace{TE} where {TE <: Discrete}` for storing any linear controller as a
+discrete state space model using [ControlSystemsBase.ss](https://juliacontrol.github.io/ControlSystems.jl/dev/man/creating_systems/#State-Space-Systems).
+It also stores the state vector for the state space model as `ctrl_x0::Vector{Float64}`.
+Additionally, it stores the `plant_model`, the number of steps of history `h` used for
+state tracking and state prediction matrices `Y2x` and `U2x` from
+[`state_prediction_matrices()`](@ref).
+There is a convinience contructor:
+
+    PVLC(
+        ctrl_ss::StateSpace{TE},
+        ctrl_x0::Vector{Float64},
+        plant_model::Union{PredictionStateSpace, StateSpace},
+        h::Int,
+    ) where {TE <: Discrete}
+
+This controller has a call signature:
+
+    (pvlc::PVLC)(;
+        ii::Int,
+        target::Matrix{Float64},
+        plant_inp::Matrix{Float64},
+        plant_out::Matrix{Float64},
+        future_inp::Matrix{Float64},
+        inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+        out_offset::Float64=0.0, out_factor::Float64=1.0,
+        kwargs...,
+    )::Vector{Float64}
+
+Tracks the state vector of the plant using `h` steps of history from `plant_inp` and
+`plant_out` and uses it to calculate future output of the plant. It compares it with a
+future `target` value and applies the linear controller `ctrl_ss` there.
+"""
 mutable struct PVLC <: Controller
     ctrl_ss::StateSpace{TE} where {TE <: Discrete}
     ctrl_x0::Vector{Float64}
-    h::Int
     plant_model::Union{PredictionStateSpace, StateSpace}
+    h::Int
     Y2x::Matrix{Float64}
     U2x::Matrix{Float64}
     function PVLC(
         ctrl_ss::StateSpace{TE},
         ctrl_x0::Vector{Float64},
         plant_model::Union{PredictionStateSpace, StateSpace},
-        h::Int=size(sys.A, 1),
+        h::Int,
     ) where {TE <: Discrete}
         Y2x, U2x = state_prediction_matrices(plant_model, h)
         return new(ctrl_ss, ctrl_x0, plant_model, h, Y2x, U2x)
@@ -288,27 +324,52 @@ function (pvlc::PVLC)(;
     out_offset::Float64=0.0, out_factor::Float64=1.0,
     kwargs...,
 )::Vector{Float64}
-    ctrl_out = zeros(Float64, size(ctrl_ss.C, 1))
-    if length(plant_inp) >= size(pvlc.U2x, 2)
+    ctrl_out = zeros(Float64, size(pvlc.ctrl_ss.C, 1))
+    lat = size(future_inp, 2)
+    if ii - pvlc.h + 1 > 0 && ii + lat <= size(target, 2)
         # Gather history of inputs and outputs
-        U = vec(plant_inp[:, (end-pvlc.h+1):pvlc.h])
-        Y = vec(plant_out[:, (end-pvlc.h+1):pvlc.h])
+        U = vec(plant_inp[:, (ii-pvlc.h+1):ii])
+        Y = vec(plant_out[:, (ii-pvlc.h+1):ii])
         # Estimate current state vector of plant model
-        est_x = pvlc.Y2x * Y .+ U2x * U
+        est_x = pvlc.Y2x * Y .+ pvlc.U2x * U
         # Evolve into the future for the delay in actuator
-        future_out, _ = model_evolve(
-            plant_model, future_inp;
+        future_out = model_evolve(
+            pvlc.plant_model, future_inp;
             x0=est_x,
             inp_offset, inp_factor, out_offset, out_factor,
         )
         # Estimate the error signal in future
-        err = target[:, ii+size(future_inp, 2)] - future_out[:, end]
+        err = target[:, ii+lat] - future_out[:, end]
         # Apply the linear controller in future
         ctrl_out, pvlc.ctrl_x0 = lsim_step(pvlc.ctrl_ss, err; x0=pvlc.ctrl_x0)
     end
     return ctrl_out
 end
 
+"""
+    run_closed_loop_sim(
+        plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
+        act::Actuator,
+        ctrl::Controller,
+        target::Union{Vector{Float64}, Matrix{Float64}};
+        inp_cond::Union{Nothing, Function}=nothing,
+        inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+        out_offset::Float64=0.0, out_factor::Float64=1.0,
+        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+        inp_feedforward::Matrix{Float64}=zeros(
+            Float64,
+            (size(plant_model.B, 2), length(target)),
+        ),
+        ctrl_start_ind::Int=1,
+    ) where {T, TE <: Discrete}
+
+Generic function to run closed loop simulations with provided `plant_model`, actuator
+`act`, controller `ctrl`, and target waveform `target`. The length of simulation is
+determined by provided `target`. Keyword arguments are possible for providing
+adjustments to inputs and outputs of the plant model as explained in
+[`model_evolve()`](@ref). Additionally, `ctrl_start_ind` can be provided to start
+control loop at an arbitrary point in the loop.
+"""
 function run_closed_loop_sim(
     plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
     act::Actuator,
