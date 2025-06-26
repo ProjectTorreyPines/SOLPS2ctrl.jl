@@ -667,7 +667,9 @@ if isempty(ARGS) || "controller" in ARGS
         tt = collect(0:Ts:2)
         set_points_tt = [0.0, 0.1, 0.5, 0.7, 1.3, 1.5, 1.7, 2.0]
         set_points = [0.0, 0.0, 1.0, 1.0, -0.5, -0.5, 0.0, 0.0]
-        target = Interpolations.linear_interpolation(set_points_tt, set_points).(tt)
+        target = Matrix{Float64}(
+            Interpolations.linear_interpolation(set_points_tt, set_points).(tt)',
+        )
 
         # Run closed loop simulation
         res = Dict()

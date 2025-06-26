@@ -1,11 +1,10 @@
 import ControlSystemIdentification: PredictionStateSpace
 import ControlSystemsBase: StateSpace, Discrete
 import LinearAlgebra: pinv
-using DataStructures: Queue, enqueue!, dequeue!
-# import ControlSystemsBase: lsim, ss, pid, d2c_exact, d2c, StateSpace
+using DataStructures: Queue, enqueue!, dequeue!, empty!, first
 
 export lsim_step, model_step, state_prediction_matrices, Actuator, DelayedActuator,
-    Controller, LinearController, PVLC, run_closed_loop_sim
+    Controller, LinearController, PVLC, MPC, run_closed_loop_sim
 
 """
     lsim_step(
@@ -201,6 +200,22 @@ end
 
 get_future_inp(act::DelayedActuator) = stack(act.buffer)
 
+function get_min_delay(act::Actuator)::Int
+    min_delay = typemax(Int)
+    has_delay = false
+    for fieldname ∈ fieldnames(typeof(act))
+        if fieldtype(typeof(act), fieldname) == DelayedActuator
+            min_delay = min(min_delay, getfield(act, fieldname).delay)
+            has_delay = true
+        end
+    end
+    if has_delay
+        return min_delay
+    else
+        return 0
+    end
+end
+
 """
     Controller
 
@@ -216,7 +231,9 @@ arguments:
   - `target::Matrix{Float64}`: Target waveform (No. of signals x Time steps)
   - `plant_inp::Matrix{Float64}`: Inputs to plant (No. of inputs x Time steps)
   - `plant_out::Matrix{Float64}`: Outputs from plant (No. of outputs x Time steps)
-  - `future_inp::Matrix{Float64}`: Upcoming future known inputs to plant (for delayed actuators) (No. of outputs x Time steps)
+  - `act::Actuator`: Actuator model in the loop
+  - `inp_cond::Union{Nothing, Function}=nothing`: Input conditioning on plant model
+  - `inp_cond_kwargs::Dict{Symbol, Any}`: Keyword arguments for `inp_cond`
   - `inp_offset::Float64`: Input offset for plant input
   - `inp_factor::Float64`: Input factor for plant input
   - `out_offset::Float64`: Output offset for plant output
@@ -286,7 +303,7 @@ This controller has a call signature:
         target::Matrix{Float64},
         plant_inp::Matrix{Float64},
         plant_out::Matrix{Float64},
-        future_inp::Matrix{Float64},
+        act::Actuator,
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
         kwargs...,
@@ -319,12 +336,13 @@ function (pvlc::PVLC)(;
     target::Matrix{Float64},
     plant_inp::Matrix{Float64},
     plant_out::Matrix{Float64},
-    future_inp::Matrix{Float64},
+    act::Actuator,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
     kwargs...,
 )::Vector{Float64}
     ctrl_out = zeros(Float64, size(pvlc.ctrl_ss.C, 1))
+    future_inp = get_future_inp(act)
     lat = size(future_inp, 2)
     if ii - pvlc.h + 1 > 0 && ii + lat <= size(target, 2)
         # Gather history of inputs and outputs
@@ -344,6 +362,162 @@ function (pvlc::PVLC)(;
         ctrl_out, pvlc.ctrl_x0 = lsim_step(pvlc.ctrl_ss, err; x0=pvlc.ctrl_x0)
     end
     return ctrl_out
+end
+
+function expand(
+    steps::StepRange{Int, Int},
+    red_vec::Vector{Float64},
+    ninps::Int,
+    horizon::Int,
+)::Vector{Vector{Float64}}
+    red_mat = reshape(red_vec, ninps, length(steps))
+    mat = zeros(Float64, ninps, horizon + 1)
+    for i ∈ 1:ninps
+        mat[i, :] = linear_interpolation(steps, red_mat[i, :]).(1:(horizon+1))
+    end
+    return [mat[:, i] for i ∈ 1:(horizon+1)]
+end
+
+mutable struct MPC <: Controller
+    plant_model::Union{PredictionStateSpace, StateSpace}
+    h::Int
+    Y2x::Matrix{Float64}
+    U2x::Matrix{Float64}
+    act::Actuator               # Actuator model without delay
+    horizon::Int                # Number of steps in future after latency
+    nopt::Int                   # Number of optimization points in horizon window
+    opt_every::Int              # Run cost optimization every opt_every steps
+    last_opt::Int               # Step index when optimization ran last time
+    min_delay::Int              # Minimum delay in all actuators
+    ctrl_out_bounds::Tuple{Vector{Float64}, Vector{Float64}}
+    future_evolve::Function
+    ctrl_out_buffer::Queue{Vector{Float64}}
+    function MPC(
+        plant_model::Union{PredictionStateSpace, StateSpace},
+        h::Int,
+        act::Actuator,               # Actuator model without delay
+        horizon::Int,                # Number of steps in future after latency
+        nopt::Int,                   # Number of optimization points in horizon window
+        opt_every::Int,              # Run cost optimization every opt_every steps
+        ctrl_out_bounds::Tuple{Vector{Float64}, Vector{Float64}}=(
+            Array{Float64}(undef, 0),
+            Array{Float64}(undef, 0),
+        ),
+    )
+        Y2x, U2x = state_prediction_matrices(plant_model, h)
+        min_delay = get_min_delay(act)
+        function fe(
+            red_steps::StepRange{Int, Int}, red_ctrl_out::Vector{Float64};
+            mpc::MPC,
+            inp_ff::Matrix{Float64}=zeros(
+                Float64,
+                size(mpc.plant_model.B, 2),
+                min_delay + horizon + 1,
+            ),
+            x0::Vector{Float64}=zeros(Float64, size(mpc.plant_model.A, 2)),
+            inp_cond::Union{Nothing, Function}=nothing,
+            inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+            out_offset::Float64=0.0, out_factor::Float64=1.0,
+            inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+        ) where {T}
+            act = deepcopy(mpc.act)
+            ninps = size(mpc.plant_model.B, 2)
+            nouts = size(mpc.plant_model.C, 1)
+            ctrl_out = expand(red_steps, red_ctrl_out, ninps, mpc.horizon)
+            plant_inp = zeros(Float64, ninps)
+            plant_out = zeros(Float64, nouts, mpc.min_delay + mpc.horizon + 1)
+            for i ∈ 1:(mpc.min_delay+mpc.horizon+1)
+                plant_inp = act(ctrl_out[i] .+ inp_ff[:, i])
+                plant_out[:, ii], x0 = model_step(
+                    mpc.plant_model, plant_inp;
+                    x0,
+                    inp_cond, inp_offset, inp_factor, out_offset, out_factor,
+                    inp_cond_kwargs,
+                )
+            end
+            return vec(plant_out)
+        end
+        last_opt = 0
+        ctrl_out_buffer = Queue{Vector{Float64}}(horizon)
+        return new(
+            plant_model, h, Y2x, U2x, act, horizon, nopt, opt_every, last_opt,
+            min_delay, ctrl_out_bounds, fe, ctrl_out_buffer,
+        )
+    end
+end
+
+function (mpc::MPC)(;
+    ii::Int,
+    target::Matrix{Float64},
+    plant_inp::Matrix{Float64},
+    plant_out::Matrix{Float64},
+    inp_cond::Union{Nothing, Function}=nothing,
+    inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+    out_offset::Float64=0.0, out_factor::Float64=1.0,
+    inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+    inp_feedforward::Matrix{Float64}=zeros(
+        Float64,
+        (size(plant_model.B, 2), length(target)),
+    ),
+    act::Actuator,
+    kwargs...,
+)::Vector{Float64} where {T}
+    fut_lookup = mpc.min_delay + mpc.horizon + 1
+
+    enough_history = ii - mpc.h + 1 > 0
+    enough_future = ii + fut_lookup <= size(target, 2)
+    opt_step = ii > mpc.opt_every + mpc.last_opt
+    buf_empty = isempty(mpc.ctrl_out_buffer)
+
+    if buf_empty
+        prev_ctrl_out = zeros(Float64, size(mpc.ctrl_ss.C, 1))
+    else
+        prev_ctrl_out = first(mpc.ctrl_out_buffer)
+    end
+
+    if enough_history && enough_future && (opt_step || buf_empty)
+        red_steps = 1:div(mpc.horizon, mpc.nopt-1):(mpc.horizon+1)
+        lower = repeat(mpc.ctrl_out_bounds[1], length(red_steps))
+        upper = repeat(mpc.ctrl_out_bounds[2], length(red_steps))
+        ninps = size(mpc.plant_model.B, 2)
+
+        # Gather history of inputs and outputs
+        U = vec(plant_inp[:, (ii-mpc.h+1):ii])
+        Y = vec(plant_out[:, (ii-mpc.h+1):ii])
+        # Estimate current state vector of plant model
+        x0 = mpc.Y2x * Y .+ mpc.U2x * U
+
+        # Prepare arguments for cost optimization
+        mpc.act = deepcopy(act)
+        target_vec = vec(target[:, ii:(ii+fut_lookup)])
+        guess = repeat(prev_ctrl_out, length(red_steps))
+        inp_ff = inp_feedforward[:, ii:(ii+fut_lookup)]
+
+        # Optimize
+        fit_res = curve_fit(
+            (x, y) -> mpc.future_evolve(
+                x, y; mpc, inp_ff, x0,
+                inp_cond, inp_offset, inp_factor, out_offset, out_factor,
+                inp_cond_kwargs,
+            ),
+            red_steps, target_vec, guess;
+            lower, upper,
+        )
+
+        # Empty buffer and fill with updated control outputs
+        empty!(mpc.ctrl_out_buffer)
+        for co ∈ expand(red_steps, coeff(fit_res), ninps, mpc.horizon)
+            enqueue!(mpc.ctrl_out_buffer, co)
+        end
+    end
+    if opt_step
+        mpc.last_opt = ii
+    end
+    if isempty(mpc.ctrl_out_buffer)
+        return zeros(Float64, size(mpc.ctrl_ss.C, 1))
+    else
+        return dequeue!(mpc.ctrl_out_buffer)
+    end
 end
 
 """
@@ -397,15 +571,21 @@ function run_closed_loop_sim(
         (size(plant_model.B, 2), size(target, 2)),
     ),
 ) where {T, TE <: Discrete}
+    # Initialization
     ctrl_out = zeros(Float64, size(inp_feedforward))
     plant_inp = zeros(Float64, (size(plant_model.B, 2), length(target)))
     plant_out = zeros(Float64, (size(plant_model.C, 1), length(target)))
     x0 =
         inv(Matrix{Float64}(I, size(plant_model.A)...) - plant_model.A) *
         plant_model.B * inp_feedforward[:, 1]
+
+    # Closed loop simulation
     for ii ∈ eachindex(target)
+        # Actuation
         plant_inp[:, ii] =
             act(ctrl_out[:, ii] .+ inp_feedforward[:, ii]) .+ noise_plant_inp[:, ii]
+
+        # Plant response
         plant_out[:, ii], x0 = model_step(
             plant_model, plant_inp[:, ii];
             x0,
@@ -413,11 +593,14 @@ function run_closed_loop_sim(
             inp_cond_kwargs,
         )
         plant_out[:, ii] .+= noise_plant_out[:, ii]
-        future_inp = get_future_inp(act)
+        # future_inp = get_future_inp(act)
+
+        # Controller
         if ii >= ctrl_start_ind && ii < length(target)
             ctrl_out[:, ii+1] =
                 ctrl(;
-                    ii, target, plant_inp, plant_out, future_inp,
+                    ii, target, plant_inp, plant_out, act, inp_feedforward,
+                    inp_cond, inp_cond_kwargs,
                     inp_offset, inp_factor, out_offset, out_factor,
                 ) .+ noise_ctrl_out[:, ii+1]
         end
