@@ -351,7 +351,7 @@ end
         plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
         act::Actuator,
         ctrl::Controller,
-        target::Union{Vector{Float64}, Matrix{Float64}};
+        target::Matrix{Float64};
         inp_cond::Union{Nothing, Function}=nothing,
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
@@ -374,24 +374,29 @@ function run_closed_loop_sim(
     plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
     act::Actuator,
     ctrl::Controller,
-    target::Union{Vector{Float64}, Matrix{Float64}};
+    target::Matrix{Float64};
     inp_cond::Union{Nothing, Function}=nothing,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
     inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     inp_feedforward::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.B, 2), length(target)),
+        (size(plant_model.B, 2), size(target, 2)),
     ),
     ctrl_start_ind::Int=1,
+    noise_plant_inp::Matrix{Float64}=zeros(
+        Float64,
+        (size(plant_model.B, 2), size(target, 2)),
+    ),
+    noise_plant_out::Matrix{Float64}=zeros(
+        Float64,
+        (size(plant_model.C, 1), size(target, 2)),
+    ),
+    noise_ctrl_out::Matrix{Float64}=zeros(
+        Float64,
+        (size(plant_model.B, 2), size(target, 2)),
+    ),
 ) where {T, TE <: Discrete}
-    if isa(target, Vector)
-        if size(plant_model.C, 1) == 1
-            target = Matrix(target')
-        else
-            error("Plant has multiple outputs, target must be Matrix")
-        end
-    end
     ctrl_out = zeros(Float64, size(inp_feedforward))
     plant_inp = zeros(Float64, (size(plant_model.B, 2), length(target)))
     plant_out = zeros(Float64, (size(plant_model.C, 1), length(target)))
@@ -399,20 +404,22 @@ function run_closed_loop_sim(
         inv(Matrix{Float64}(I, size(plant_model.A)...) - plant_model.A) *
         plant_model.B * inp_feedforward[:, 1]
     for ii ∈ eachindex(target)
-        plant_inp[:, ii] = act(ctrl_out[:, ii] .+ inp_feedforward[:, ii])
+        plant_inp[:, ii] =
+            act(ctrl_out[:, ii] .+ inp_feedforward[:, ii]) .+ noise_plant_inp[:, ii]
         plant_out[:, ii], x0 = model_step(
             plant_model, plant_inp[:, ii];
             x0,
             inp_cond, inp_offset, inp_factor, out_offset, out_factor,
             inp_cond_kwargs,
         )
-        # err = target[:, ii] .- plant_out[:, ii]
+        plant_out[:, ii] .+= noise_plant_out[:, ii]
         future_inp = get_future_inp(act)
         if ii >= ctrl_start_ind && ii < length(target)
-            ctrl_out[:, ii+1] = ctrl(;
-                ii, target, plant_inp, plant_out, future_inp,
-                inp_offset, inp_factor, out_offset, out_factor,
-            )
+            ctrl_out[:, ii+1] =
+                ctrl(;
+                    ii, target, plant_inp, plant_out, future_inp,
+                    inp_offset, inp_factor, out_offset, out_factor,
+                ) .+ noise_ctrl_out[:, ii+1]
         end
     end
     return Dict(
@@ -431,5 +438,8 @@ function run_closed_loop_sim(
         :plant_inp => plant_inp,
         :plant_out => plant_out,
         :ctrl_out => ctrl_out,
+        :noise_plant_inp => noise_plant_inp,
+        :noise_plant_out => noise_plant_out,
+        :noise_ctrl_out => noise_ctrl_out,
     )
 end
