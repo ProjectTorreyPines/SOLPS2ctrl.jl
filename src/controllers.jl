@@ -1,7 +1,8 @@
 import ControlSystemIdentification: PredictionStateSpace
 import ControlSystemsBase: StateSpace, Discrete
 import LinearAlgebra: pinv
-using DataStructures: Queue, enqueue!, dequeue!, empty!, first
+import DataStructures: Queue, enqueue!, dequeue!, empty!, first
+import LsqFit: curve_fit, coef
 
 export lsim_step, model_step, state_prediction_matrices, Actuator, DelayedActuator,
     Controller, LinearController, PVLC, MPC, run_closed_loop_sim
@@ -284,7 +285,7 @@ Implementation of Predicted Variable Linear Controller (PVLC). It stores
 `ctrl_ss::StateSpace{TE} where {TE <: Discrete}` for storing any linear controller as a
 discrete state space model using [ControlSystemsBase.ss](https://juliacontrol.github.io/ControlSystems.jl/dev/man/creating_systems/#State-Space-Systems).
 It also stores the state vector for the state space model as `ctrl_x0::Vector{Float64}`.
-Additionally, it stores the `plant_model`, the number of steps of history `h` used for
+Additionally, it stores the `plant`, the number of steps of history `h` used for
 state tracking and state prediction matrices `Y2x` and `U2x` from
 [`state_prediction_matrices()`](@ref).
 There is a convinience contructor:
@@ -292,7 +293,7 @@ There is a convinience contructor:
     PVLC(
         ctrl_ss::StateSpace{TE},
         ctrl_x0::Vector{Float64},
-        plant_model::Union{PredictionStateSpace, StateSpace},
+        plant::Union{PredictionStateSpace, StateSpace},
         h::Int,
     ) where {TE <: Discrete}
 
@@ -316,18 +317,18 @@ future `target` value and applies the linear controller `ctrl_ss` there.
 mutable struct PVLC <: Controller
     ctrl_ss::StateSpace{TE} where {TE <: Discrete}
     ctrl_x0::Vector{Float64}
-    plant_model::Union{PredictionStateSpace, StateSpace}
+    plant::Union{PredictionStateSpace, StateSpace}
     h::Int
     Y2x::Matrix{Float64}
     U2x::Matrix{Float64}
     function PVLC(
         ctrl_ss::StateSpace{TE},
         ctrl_x0::Vector{Float64},
-        plant_model::Union{PredictionStateSpace, StateSpace},
+        plant::Union{PredictionStateSpace, StateSpace},
         h::Int,
     ) where {TE <: Discrete}
-        Y2x, U2x = state_prediction_matrices(plant_model, h)
-        return new(ctrl_ss, ctrl_x0, plant_model, h, Y2x, U2x)
+        Y2x, U2x = state_prediction_matrices(plant, h)
+        return new(ctrl_ss, ctrl_x0, plant, h, Y2x, U2x)
     end
 end
 
@@ -352,7 +353,7 @@ function (pvlc::PVLC)(;
         est_x = pvlc.Y2x * Y .+ pvlc.U2x * U
         # Evolve into the future for the delay in actuator
         future_out = model_evolve(
-            pvlc.plant_model, future_inp;
+            pvlc.plant, future_inp;
             x0=est_x,
             inp_offset, inp_factor, out_offset, out_factor,
         )
@@ -373,13 +374,86 @@ function expand(
     red_mat = reshape(red_vec, ninps, length(steps))
     mat = zeros(Float64, ninps, horizon + 1)
     for i ∈ 1:ninps
-        mat[i, :] = linear_interpolation(steps, red_mat[i, :]).(1:(horizon+1))
+        mat[i, :] =
+            Interpolations.linear_interpolation(
+                steps,
+                red_mat[i, :];
+                extrapolation_bc=Interpolations.Line(),
+            ).(
+                1:(horizon+1),
+            )
     end
     return [mat[:, i] for i ∈ 1:(horizon+1)]
 end
 
+"""
+    MPC
+
+Implementation of simple leaqt square optimized Model Predictive Controller (MPC). It
+stores the `plant`, the number of steps of history `h` used for state tracking and
+state prediction matrices `Y2x` and `U2x` from [`state_prediction_matrices()`](@ref).
+It stores a current deep copy of actuator instance  in `act` to try it during
+optimization and it stores setting for least square optimization. It also stores a
+`future_evolve` that is created based on `plant`, `act`, and optimization setting and
+is the model function that is used for optimization later. This controller stores a
+buffer for control outputs, `ctrl_out_buffer` so that it can be called less often and
+it can reuse it's previous optimization results.
+
+There is a convinience contructor:
+
+    MPC(
+        plant::Union{PredictionStateSpace, StateSpace},
+        h::Int,
+        act::Actuator,               # Actuator model without delay
+        horizon::Int,                # Number of steps in future after latency
+        nopt::Int,                   # Number of optimization points in horizon window
+        opt_every::Int,              # Run cost optimization every opt_every steps
+        ctrl_out_bounds::Tuple{Vector{Float64}, Vector{Float64}}=(
+            Array{Float64}(undef, 0),
+            Array{Float64}(undef, 0),
+        ),
+    )
+
+This contructor takes in minimum required information to create a self-consistent MPC
+instance. It sets the other dependent quantities in MPC such as `Y2x`, `U2x`,
+`min_delay`, and create a `future_evolve` function and initializes the `ctrl_out_buffer`.
+`act` needs to be a deepcopy of the actuator instance. `horizon` is the number of steps
+after the `min_delay` among all acturators for which the optimization is carried out.
+`nopt` is the number of optimization points taken along the `horizon` which are lineary
+distributed. The gaps between this optimzation points are interpolated linearly in the
+output. `opt_every` defines the frequency of optimization, i.e. at every `opt_every`
+call of this controller, the optimization is carried out. This avoids unnecessary
+over-calculations and thus results in a faster controller.
+
+This controller has a call signature:
+
+    (mpc::MPC)(;
+        ii::Int,
+        target::Matrix{Float64},
+        plant_inp::Matrix{Float64},
+        plant_out::Matrix{Float64},
+        act::Actuator,
+        inp_cond::Union{Nothing, Function}=nothing,
+        inp_offset::Float64=0.0, inp_factor::Float64=1.0,
+        out_offset::Float64=0.0, out_factor::Float64=1.0,
+        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+        inp_feedforward::Matrix{Float64}=zeros(
+            Float64,
+            (size(plant.B, 2), length(target)),
+        ),
+        kwargs...,
+    )::Vector{Float64} where {T}
+
+Tracks the state vector of the plant using `h` steps of history from `plant_inp` and
+`plant_out` and uses it along with `act` to run an optimization to match `target` in
+future after the minimum delay from all the actuators. This function uses
+[`curve_fit()`](https://julianlsolvers.github.io/LsqFit.jl/latest/api/#LsqFit.curve_fit)
+for the non-linear least squares fitting which uses Levenberg-Marquardt algorithm. This
+function performs the optimization every `opt_every` call and uses the stored control
+output in `ctrl_out_buffer` meanwhile.
+"""
 mutable struct MPC <: Controller
-    plant_model::Union{PredictionStateSpace, StateSpace}
+    plant::Union{PredictionStateSpace, StateSpace}
     h::Int
     Y2x::Matrix{Float64}
     U2x::Matrix{Float64}
@@ -393,7 +467,7 @@ mutable struct MPC <: Controller
     future_evolve::Function
     ctrl_out_buffer::Queue{Vector{Float64}}
     function MPC(
-        plant_model::Union{PredictionStateSpace, StateSpace},
+        plant::Union{PredictionStateSpace, StateSpace},
         h::Int,
         act::Actuator,               # Actuator model without delay
         horizon::Int,                # Number of steps in future after latency
@@ -404,32 +478,35 @@ mutable struct MPC <: Controller
             Array{Float64}(undef, 0),
         ),
     )
-        Y2x, U2x = state_prediction_matrices(plant_model, h)
+        Y2x, U2x = state_prediction_matrices(plant, h)
         min_delay = get_min_delay(act)
         function fe(
             red_steps::StepRange{Int, Int}, red_ctrl_out::Vector{Float64};
             mpc::MPC,
             inp_ff::Matrix{Float64}=zeros(
                 Float64,
-                size(mpc.plant_model.B, 2),
+                size(mpc.plant.B, 2),
                 min_delay + horizon + 1,
             ),
-            x0::Vector{Float64}=zeros(Float64, size(mpc.plant_model.A, 2)),
+            x0::Vector{Float64}=zeros(Float64, size(mpc.plant.A, 2)),
             inp_cond::Union{Nothing, Function}=nothing,
             inp_offset::Float64=0.0, inp_factor::Float64=1.0,
             out_offset::Float64=0.0, out_factor::Float64=1.0,
             inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
         ) where {T}
             act = deepcopy(mpc.act)
-            ninps = size(mpc.plant_model.B, 2)
-            nouts = size(mpc.plant_model.C, 1)
+            ninps = size(mpc.plant.B, 2)
+            nouts = size(mpc.plant.C, 1)
             ctrl_out = expand(red_steps, red_ctrl_out, ninps, mpc.horizon)
+            # Padding far in future extra zero inputs, these won't make any effect
+            # because of the minium delay
+            ctrl_out = [ctrl_out; repeat(zeros(Float64, ninps), mpc.min_delay)]
             plant_inp = zeros(Float64, ninps)
             plant_out = zeros(Float64, nouts, mpc.min_delay + mpc.horizon + 1)
             for i ∈ 1:(mpc.min_delay+mpc.horizon+1)
                 plant_inp = act(ctrl_out[i] .+ inp_ff[:, i])
-                plant_out[:, ii], x0 = model_step(
-                    mpc.plant_model, plant_inp;
+                plant_out[:, i], x0 = model_step(
+                    mpc.plant, plant_inp;
                     x0,
                     inp_cond, inp_offset, inp_factor, out_offset, out_factor,
                     inp_cond_kwargs,
@@ -440,7 +517,7 @@ mutable struct MPC <: Controller
         last_opt = 0
         ctrl_out_buffer = Queue{Vector{Float64}}(horizon)
         return new(
-            plant_model, h, Y2x, U2x, act, horizon, nopt, opt_every, last_opt,
+            plant, h, Y2x, U2x, act, horizon, nopt, opt_every, last_opt,
             min_delay, ctrl_out_bounds, fe, ctrl_out_buffer,
         )
     end
@@ -451,15 +528,15 @@ function (mpc::MPC)(;
     target::Matrix{Float64},
     plant_inp::Matrix{Float64},
     plant_out::Matrix{Float64},
+    act::Actuator,
     inp_cond::Union{Nothing, Function}=nothing,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
     inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     inp_feedforward::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.B, 2), length(target)),
+        (size(plant.B, 2), length(target)),
     ),
-    act::Actuator,
     kwargs...,
 )::Vector{Float64} where {T}
     fut_lookup = mpc.min_delay + mpc.horizon + 1
@@ -470,7 +547,7 @@ function (mpc::MPC)(;
     buf_empty = isempty(mpc.ctrl_out_buffer)
 
     if buf_empty
-        prev_ctrl_out = zeros(Float64, size(mpc.ctrl_ss.C, 1))
+        prev_ctrl_out = zeros(Float64, size(mpc.plant.B, 2))
     else
         prev_ctrl_out = first(mpc.ctrl_out_buffer)
     end
@@ -479,7 +556,7 @@ function (mpc::MPC)(;
         red_steps = 1:div(mpc.horizon, mpc.nopt-1):(mpc.horizon+1)
         lower = repeat(mpc.ctrl_out_bounds[1], length(red_steps))
         upper = repeat(mpc.ctrl_out_bounds[2], length(red_steps))
-        ninps = size(mpc.plant_model.B, 2)
+        ninps = size(mpc.plant.B, 2)
 
         # Gather history of inputs and outputs
         U = vec(plant_inp[:, (ii-mpc.h+1):ii])
@@ -489,9 +566,9 @@ function (mpc::MPC)(;
 
         # Prepare arguments for cost optimization
         mpc.act = deepcopy(act)
-        target_vec = vec(target[:, ii:(ii+fut_lookup)])
+        target_vec = vec(target[:, (ii+1):(ii+fut_lookup)])
         guess = repeat(prev_ctrl_out, length(red_steps))
-        inp_ff = inp_feedforward[:, ii:(ii+fut_lookup)]
+        inp_ff = inp_feedforward[:, (ii+1):(ii+fut_lookup)]
 
         # Optimize
         fit_res = curve_fit(
@@ -506,7 +583,7 @@ function (mpc::MPC)(;
 
         # Empty buffer and fill with updated control outputs
         empty!(mpc.ctrl_out_buffer)
-        for co ∈ expand(red_steps, coeff(fit_res), ninps, mpc.horizon)
+        for co ∈ expand(red_steps, coef(fit_res), ninps, mpc.horizon)
             enqueue!(mpc.ctrl_out_buffer, co)
         end
     end
@@ -514,7 +591,7 @@ function (mpc::MPC)(;
         mpc.last_opt = ii
     end
     if isempty(mpc.ctrl_out_buffer)
-        return zeros(Float64, size(mpc.ctrl_ss.C, 1))
+        return zeros(Float64, size(mpc.plant.B, 2))
     else
         return dequeue!(mpc.ctrl_out_buffer)
     end
@@ -522,7 +599,7 @@ end
 
 """
     run_closed_loop_sim(
-        plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
+        plant::Union{PredictionStateSpace{TE}, StateSpace{TE}},
         act::Actuator,
         ctrl::Controller,
         target::Matrix{Float64};
@@ -532,20 +609,34 @@ end
         inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
         inp_feedforward::Matrix{Float64}=zeros(
             Float64,
-            (size(plant_model.B, 2), length(target)),
+            (size(plant.B, 2), size(target, 2)),
         ),
         ctrl_start_ind::Int=1,
+        noise_plant_inp::Matrix{Float64}=zeros(
+            Float64,
+            (size(plant.B, 2), size(target, 2)),
+        ),
+        noise_plant_out::Matrix{Float64}=zeros(
+            Float64,
+            (size(plant.C, 1), size(target, 2)),
+        ),
+        noise_ctrl_out::Matrix{Float64}=zeros(
+            Float64,
+            (size(plant.B, 2), size(target, 2)),
+        ),
     ) where {T, TE <: Discrete}
 
-Generic function to run closed loop simulations with provided `plant_model`, actuator
+Generic function to run closed loop simulations with provided `plant`, actuator
 `act`, controller `ctrl`, and target waveform `target`. The length of simulation is
 determined by provided `target`. Keyword arguments are possible for providing
 adjustments to inputs and outputs of the plant model as explained in
 [`model_evolve()`](@ref). Additionally, `ctrl_start_ind` can be provided to start
-control loop at an arbitrary point in the loop.
+control loop at an arbitrary point in the loop. `noise_plant_inp`, `noise_plant_out`,
+and `noise_ctrl_out` allow addition of predefined noise waveforms at the input of plant,
+output of plant, and the output of controller respectively.
 """
 function run_closed_loop_sim(
-    plant_model::Union{PredictionStateSpace{TE}, StateSpace{TE}},
+    plant::Union{PredictionStateSpace{TE}, StateSpace{TE}},
     act::Actuator,
     ctrl::Controller,
     target::Matrix{Float64};
@@ -555,29 +646,29 @@ function run_closed_loop_sim(
     inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     inp_feedforward::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.B, 2), size(target, 2)),
+        (size(plant.B, 2), size(target, 2)),
     ),
     ctrl_start_ind::Int=1,
     noise_plant_inp::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.B, 2), size(target, 2)),
+        (size(plant.B, 2), size(target, 2)),
     ),
     noise_plant_out::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.C, 1), size(target, 2)),
+        (size(plant.C, 1), size(target, 2)),
     ),
     noise_ctrl_out::Matrix{Float64}=zeros(
         Float64,
-        (size(plant_model.B, 2), size(target, 2)),
+        (size(plant.B, 2), size(target, 2)),
     ),
 ) where {T, TE <: Discrete}
     # Initialization
     ctrl_out = zeros(Float64, size(inp_feedforward))
-    plant_inp = zeros(Float64, (size(plant_model.B, 2), length(target)))
-    plant_out = zeros(Float64, (size(plant_model.C, 1), length(target)))
+    plant_inp = zeros(Float64, (size(plant.B, 2), length(target)))
+    plant_out = zeros(Float64, (size(plant.C, 1), length(target)))
     x0 =
-        inv(Matrix{Float64}(I, size(plant_model.A)...) - plant_model.A) *
-        plant_model.B * inp_feedforward[:, 1]
+        inv(Matrix{Float64}(I, size(plant.A)...) - plant.A) *
+        plant.B * inp_feedforward[:, 1]
 
     # Closed loop simulation
     for ii ∈ eachindex(target)
@@ -587,7 +678,7 @@ function run_closed_loop_sim(
 
         # Plant response
         plant_out[:, ii], x0 = model_step(
-            plant_model, plant_inp[:, ii];
+            plant, plant_inp[:, ii];
             x0,
             inp_cond, inp_offset, inp_factor, out_offset, out_factor,
             inp_cond_kwargs,
@@ -606,7 +697,7 @@ function run_closed_loop_sim(
         end
     end
     return Dict(
-        :plant_model => plant_model,
+        :plant => plant,
         :act => act,
         :ctrl => ctrl,
         :target => target,

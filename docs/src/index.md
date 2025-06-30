@@ -102,6 +102,11 @@ end
 
 ```@docs
 Controller
+```
+
+### Linear Controller
+
+```@docs
 LinearController
 ```
 
@@ -243,6 +248,12 @@ Then, future state can be predicted by:
 
 ```math
 x_{k+1} = \mathcal{N} \mathcal{L}^{-1} (\vec{Y} - \mathcal{M} \vec{U}) + \mathcal{O} \vec{U}
+```
+
+### Model Predictive Controller
+
+```@docs
+MPC
 ```
 
 ## Closed loop simulations

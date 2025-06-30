@@ -663,6 +663,13 @@ if isempty(ARGS) || "controller" in ARGS
             end
         end
 
+        # Create MPC
+        act3 = TestAct(DelayedActuator(delay_steps), 5.0)
+        horizon = 50    # Number of steps in future after latency
+        nopt = 5        # Number of optimization points in horizon window
+        opt_every = 10  # Run cost optimization every opt_every steps
+        mpc = MPC(plant_model, 20, act3, horizon, nopt, opt_every)
+
         # Set a target waveform
         tt = collect(0:Ts:2)
         set_points_tt = [0.0, 0.1, 0.5, 0.7, 1.3, 1.5, 1.7, 2.0]
@@ -671,14 +678,39 @@ if isempty(ARGS) || "controller" in ARGS
             Interpolations.linear_interpolation(set_points_tt, set_points).(tt)',
         )
 
+        # Create some noise
+        noise_std = 1e-2
+        noise_plant_inp =
+            randn(Float64, (size(plant_model.B, 2), size(target, 2))) * noise_std
+        noise_plant_out =
+            randn(Float64, (size(plant_model.C, 1), size(target, 2))) * noise_std
+        noise_ctrl_out =
+            randn(Float64, (size(plant_model.B, 2), size(target, 2))) * noise_std
+
         # Run closed loop simulation
         res = Dict()
-        res["PI"] = run_closed_loop_sim(plant_model, act, lc, target)
-        res["PVLC"] = run_closed_loop_sim(plant_model, act2, pvlc, target)
+        print("Simulation time $(length(target)) steps, PI: ")
+        @time res["PI"] = run_closed_loop_sim(
+            plant_model, act, lc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
+        print("Simulation time $(length(target)) steps, PVLC: ")
+        @time res["PVLC"] = run_closed_loop_sim(
+            plant_model, act2, pvlc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
+        print("Simulation time $(length(target)) steps, MPC: ")
+        @time res["MPC"] = run_closed_loop_sim(
+            plant_model, act3, mpc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
 
         p1 = plot(
             tt, res["PI"][:target][1, :];
-            label="Target", linestyle=:dash, color=:black,
+            label="Target", linewidth=2, linestyle=:dash, color=:black,
         )
         plot!(
             tt, res["PI"][:plant_out][1, :];
@@ -689,6 +721,11 @@ if isempty(ARGS) || "controller" in ARGS
             label="PVLC", ylabel="Plant Output", xformatter=_ -> "",
             linewidth=2, color=:orange,
         )
+        plot!(
+            tt, res["MPC"][:plant_out][1, :];
+            label="MPC", ylabel="Plant Output", xformatter=_ -> "",
+            linewidth=2, color=:darkgreen,
+        )
         p2 = plot(
             tt, res["PI"][:plant_inp][1, :];
             label="PI", linewidth=2, color=:deepskyblue3,
@@ -698,6 +735,11 @@ if isempty(ARGS) || "controller" in ARGS
             label="PVLC", ylabel="Plant Input", xformatter=_ -> "",
             linewidth=2, color=:orange,
         )
+        plot!(
+            tt, res["MPC"][:plant_inp][1, :];
+            label="MPC", ylabel="Plant Input", xformatter=_ -> "",
+            linewidth=2, color=:darkgreen,
+        )
         p3 = plot(
             tt, res["PI"][:ctrl_out][1, :];
             label="PI", linewidth=2, color=:deepskyblue3,
@@ -706,6 +748,11 @@ if isempty(ARGS) || "controller" in ARGS
             tt, res["PVLC"][:ctrl_out][1, :];
             label="PVLC", ylabel="Controller\nOutput", xlabel="Time / s",
             linewidth=2, color=:orange,
+        )
+        plot!(
+            tt, res["MPC"][:ctrl_out][1, :];
+            label="MPC", ylabel="Controller\nOutput", xlabel="Time / s",
+            linewidth=2, color=:darkgreen,
         )
         l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
         plot(
@@ -719,18 +766,25 @@ if isempty(ARGS) || "controller" in ARGS
 
         savefig("$(@__DIR__)/Closed_Loop_Sim_Results.pdf")
 
-        residual_PVLC = sqrt(
-            Statistics.mean(
-                (res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2,
-            ),
-        )
-
         residual_LC = sqrt(
             Statistics.mean(
                 (res["PI"][:target][1, :] .- res["PI"][:plant_out][1, :]) .^ 2,
             ),
         )
 
+        residual_PVLC = sqrt(
+            Statistics.mean(
+                (res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2,
+            ),
+        )
+
+        residual_MPC = sqrt(
+            Statistics.mean(
+                (res["MPC"][:target][1, :] .- res["MPC"][:plant_out][1, :]) .^ 2,
+            ),
+        )
+
         @test residual_PVLC < residual_LC
+        @test residual_MPC < residual_PVLC
     end
 end
