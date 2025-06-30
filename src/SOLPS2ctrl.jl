@@ -11,6 +11,7 @@ include("$(@__DIR__)/supersize_profile.jl")
 include("$(@__DIR__)/repair_eq.jl")
 include("$(@__DIR__)/unit_utils.jl")
 include("$(@__DIR__)/system_id.jl")
+include("$(@__DIR__)/controllers.jl")
 
 """
     find_files_in_allowed_folders(

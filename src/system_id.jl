@@ -4,7 +4,9 @@ import LinearAlgebra: I, inv
 import LsqFit: curve_fit, coef
 
 export offset_scale,
-    unscale_unoffset, model_evolve, system_id, system_id_optimal_input_cond
+    unscale_unoffset, model_evolve, system_id,
+    system_id_optimal_inp_cond
+
 """
     offset_scale(
         val::Union{Float64, Vector{Float64}, Matrix{Float64}};
@@ -50,10 +52,10 @@ end
         out::Union{Vector{Float64}, Matrix{Float64}},
         tt::Vector{Float64},
         order::Int;
-        input_cond::Union{Nothing, Function}=nothing,
+        inp_cond::Union{Nothing, Function}=nothing,
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
-        input_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
         newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
         verbose::Bool=false,
     ) where {T, U}
@@ -61,9 +63,10 @@ end
 Perform system identification for a set on input data `inp`, output data `out`, and
 time series vector `tt`. If there are more than one inputs or outputs, provide them as
 Matrix with first dimension for ports (input or output) and second dimension for time.
-If `input_cond` is provided, it is applied to offseted and scaled input before
+
+If `inp_cond` is provided, it is applied to offseted and scaled input before
 performing system identification with keywords for this function provided in
-`input_cond_kwargs`.
+`inp_cond_kwargs`.
 
 This function uses [ControlSystemIdentification.newpem](https://baggepinnen.github.io/ControlSystemIdentification.jl/stable/ss/#ControlSystemIdentification.newpem)
 to perform the system identification. Any additional keywords for this function should
@@ -77,17 +80,17 @@ function system_id(
     out::Union{Vector{Float64}, Matrix{Float64}},
     tt::Vector{Float64},
     order::Int;
-    input_cond::Union{Nothing, Function}=nothing,
+    inp_cond::Union{Nothing, Function}=nothing,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
-    input_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+    inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
     verbose::Bool=false,
 ) where {T, U}
     @assert size(inp)[end] == size(out)[end] == length(tt)
     inp_so = offset_scale(inp; offset=inp_offset, factor=inp_factor)
-    if !isnothing(input_cond)
-        inp_so = input_cond(inp_so; input_cond_kwargs...)
+    if !isnothing(inp_cond)
+        inp_so = inp_cond(inp_so; inp_cond_kwargs...)
     end
     u = Matrix{Float64}[]
     if isa(inp_so, Vector)
@@ -123,10 +126,11 @@ end
     model_evolve(
         sys::Union{PredictionStateSpace, StateSpace},
         inp::Union{Vector{Float64}, Matrix{Float64}};
-        input_cond::Union{Nothing, Function}=nothing,
+        x0::Union{Nothing, Vector{Float64}}=nothing,
+        inp_cond::Union{Nothing, Function}=nothing,
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
-        input_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     )::Union{Vector{Float64}, Matrix{Float64}} where {T}
 
 Evolve a state space model `sys` with the input steps `inp`. The input is offseted and
@@ -137,14 +141,15 @@ applied to the input after scaling and offseting along with any keywords passed 
 function model_evolve(
     sys::Union{PredictionStateSpace, StateSpace},
     inp::Union{Vector{Float64}, Matrix{Float64}};
-    input_cond::Union{Nothing, Function}=nothing,
+    x0::Union{Nothing, Vector{Float64}}=nothing,
+    inp_cond::Union{Nothing, Function}=nothing,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
-    input_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
+    inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
 )::typeof(inp) where {T}
     inp_so = offset_scale(inp; offset=inp_offset, factor=inp_factor)
-    if !isnothing(input_cond)
-        inp_so = input_cond(inp_so; input_cond_kwargs...)
+    if !isnothing(inp_cond)
+        inp_so = inp_cond(inp_so; inp_cond_kwargs...)
     end
     u = Matrix{Float64}[]
     if isa(inp_so, Vector)
@@ -153,10 +158,12 @@ function model_evolve(
         u = inp_so
     end
 
-    x0 = inv(Matrix{Float64}(I, size(sys.A)...) - sys.A) * sys.B * u[:, 1]
+    if isnothing(x0)
+        x0 = inv(Matrix{Float64}(I, size(sys.A)...) - sys.A) * sys.B * u[:, 1]
+    end
     modeled_out_so, _, x0, _ = lsim(sys, u; x0)
     modeled_out = unscale_unoffset(modeled_out_so; offset=out_offset, factor=out_factor)
-    if size(modeled_out)[1] == 1
+    if isa(inp, Vector)
         return modeled_out[1, :]
     else
         return modeled_out
@@ -164,17 +171,17 @@ function model_evolve(
 end
 
 """
-    system_id_optimal_input_cond(
+    system_id_optimal_inp_cond(
         inp::Union{Vector{Float64}, Matrix{Float64}},
         out::Union{Vector{Float64}, Matrix{Float64}},
         tt::Vector{Float64},
         order::Int,
-        input_cond::Union{Nothing, Function},
-        input_cond_args_guess::Dict{Symbol, T};
+        inp_cond::Union{Nothing, Function},
+        inp_cond_args_guess::Dict{Symbol, T};
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
-        input_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
-        input_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
+        inp_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
+        inp_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
         newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
         verbose::Bool=false,
     ) where {T, U, V, W}
@@ -183,9 +190,9 @@ Perform system identification for a set on input data `inp`, output data `out`, 
 time series vector `tt`. If there are more than one inputs or outputs, provide them as
 Matrix with first dimension for ports (input or output) and second dimension for time.
 
-The `input_cond` is applied to offseted and scaled input before performing system
-identification. The `input_cond_args_guess` is used as initial keyword arguments that
-provide the parameters of the `input_cond`. These arguments are then used to find the
+The `inp_cond` is applied to offseted and scaled input before performing system
+identification. The `inp_cond_args_guess` is used as initial keyword arguments that
+provide the parameters of the `inp_cond`. These arguments are then used to find the
 best fit while iteratively performing [`system_id`](@ref) in each step.
 
 This function uses [ControlSystemIdentification.newpem](https://baggepinnen.github.io/ControlSystemIdentification.jl/stable/ss/#ControlSystemIdentification.newpem)
@@ -200,75 +207,54 @@ For advanced use, it is recommended to do system identification directly with `n
 and optimize using your favorite fitting method instead of using this function.
 
 Returns a linear state space model of the `order` and the keyword argument dictionary
-containing optimal parameters for `input_cond` function.
+containing optimal parameters for `inp_cond` function.
 """
-function system_id_optimal_input_cond(
+function system_id_optimal_inp_cond(
     inp::Union{Vector{Float64}, Matrix{Float64}},
     out::Union{Vector{Float64}, Matrix{Float64}},
     tt::Vector{Float64},
     order::Int,
-    input_cond::Function,
-    input_cond_args_guess::Dict{Symbol, T};
+    inp_cond::Function,
+    inp_cond_args_guess::Dict{Symbol, T};
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
-    input_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
-    input_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
+    inp_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
+    inp_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
     newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
     verbose::Bool=false,
 ) where {T, U, V, W}
-    key_list = collect(keys(input_cond_args_guess))
+    key_list = collect(keys(inp_cond_args_guess))
     function model(inp, param)
-        input_cond_kwargs = Dict(key => param[ii] for (ii, key) ∈ enumerate(key_list))
+        inp_cond_kwargs = Dict(key => param[ii] for (ii, key) ∈ enumerate(key_list))
         sys = system_id(
-            inp,
-            out,
-            tt,
-            order;
-            input_cond,
-            inp_offset,
-            inp_factor,
-            out_offset,
-            out_factor,
-            input_cond_kwargs,
-            newpem_kwargs,
-            verbose,
+            inp, out, tt, order;
+            inp_cond, inp_offset, inp_factor, out_offset, out_factor,
+            inp_cond_kwargs,
+            newpem_kwargs, verbose,
         )
         return model_evolve(
-            sys,
-            inp;
-            input_cond,
-            inp_offset,
-            inp_factor,
-            out_offset,
-            out_factor,
+            sys, inp;
+            inp_cond, inp_offset, inp_factor, out_offset, out_factor, inp_cond_kwargs,
         )
     end
-    guess = [input_cond_args_guess[key] for key ∈ key_list]
+    guess = [inp_cond_args_guess[key] for key ∈ key_list]
     lower = [
-        input_cond_args_lower[key] for
-        key ∈ key_list if key in keys(input_cond_args_lower)
+        inp_cond_args_lower[key] for
+        key ∈ key_list if key in keys(inp_cond_args_lower)
     ]
     lower = [
-        input_cond_args_upper[key] for
-        key ∈ key_list if key in keys(input_cond_args_upper)
+        inp_cond_args_upper[key] for
+        key ∈ key_list if key in keys(inp_cond_args_upper)
     ]
 
     fit_result = coef(curve_fit(model, inp, out, guess))
     opt = Dict{Symbol, T}(key => fit_result[ii] for (ii, key) ∈ enumerate(key_list))
 
     sys = system_id(
-        inp,
-        out,
-        tt,
-        order;
-        input_cond,
-        inp_offset,
-        inp_factor,
-        out_offset,
-        out_factor,
-        input_cond_kwargs=opt,
-        newpem_kwargs,
-        verbose,
+        inp, out, tt, order;
+        inp_cond, inp_offset, inp_factor, out_offset, out_factor,
+        inp_cond_kwargs=opt,
+        newpem_kwargs, verbose,
     )
     return sys, opt
 end

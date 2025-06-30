@@ -1,57 +1,10 @@
 using SOLPS2ctrl
-using SOLPS2ctrl: SOLPS2ctrl
-using SOLPS2imas: SOLPS2imas
-using IMAS: IMAS
-using EFIT: EFIT
+using SOLPS2ctrl:
+    SOLPS2ctrl, SOLPS2imas, IMAS, IMASggd, EFIT, Unitful, Interpolations, Statistics
 using Plots
 using Test
-using Unitful: Unitful
-using Interpolations: Interpolations
-using ArgParse: ArgParse
-using IMASggd: IMASggd, get_grid_subset
 using DelimitedFiles: readdlm
-using Statistics: mean
-
-function parse_commandline()
-    # Define newARGS = ["--yourflag"] to run only tests on your flags when including runtests.jl
-    localARGS = (@isdefined(newARGS) && newARGS !== nothing) ? newARGS : ARGS  # Thanks https://stackoverflow.com/a/44978474/6605826
-    s = ArgParse.ArgParseSettings(; description="Run tests. Default is all tests.")
-
-    ArgParse.add_arg_table!(s,
-        ["--unit_utils"],
-        Dict(:help => "Test only unit conversion utilities",
-            :action => :store_true),
-        ["--core_profile_extension"],
-        Dict(:help => "Test only core profile extension",
-            :action => :store_true),
-        ["--edge_profile_extension"],
-        Dict(:help => "Test only edge profile extension",
-            :action => :store_true),
-        ["--heavy_utilities"],
-        Dict(:help => "Test only heavy utilities",
-            :action => :store_true),
-        ["--repair_eq"],
-        Dict(:help => "Test only repair_eq",
-            :action => :store_true),
-        ["--geqdsk_to_imas"],
-        Dict(:help => "Test only geqdsk_to_imas",
-            :action => :store_true),
-        ["--preparation"],
-        Dict(:help => "Test only preparation",
-            :action => :store_true),
-        ["--system_id"],
-        Dict(:help => "Test only system identification",
-            :action => :store_true),
-    )
-    args = ArgParse.parse_args(localARGS, s)
-    if !any(values(args)) # If no flags are set, run all tests
-        for k ∈ keys(args)
-            args[k] = true
-        end
-    end
-    return args
-end
-args = parse_commandline()
+using ControlSystemsBase: lsim, ssrand, delay, tf, c2d, ss, pid, margin
 
 """
     make_test_profile()
@@ -116,7 +69,7 @@ function define_default_sample_set()
     return b2fgmtry, b2time, b2mn, eqdsk
 end
 
-if args["unit_utils"]
+if isempty(ARGS) || "units" in ARGS
     @testset "Unit conversion utilities" begin
         # Gas unit converter
         flow_tls = 40.63 * Unitful.Torr * Unitful.L / Unitful.s
@@ -151,7 +104,7 @@ if args["unit_utils"]
     end
 end
 
-if args["core_profile_extension"]
+if isempty(ARGS) || "core" in ARGS
     @testset "core_profile_extension" begin
         # Just the basic profile extrapolator ------------------
         edge_rho = Array(LinRange(0.88, 1.0, 18))
@@ -206,7 +159,7 @@ if args["core_profile_extension"]
     end
 end
 
-if args["edge_profile_extension"]
+if isempty(ARGS) || "edge" in ARGS
     @testset "edge_profile_extension" begin
         # Test for getting mesh spacing
         b2fgmtry, b2time, b2mn, eqdsk = define_default_sample_set()
@@ -221,7 +174,7 @@ if args["edge_profile_extension"]
         grid_ggd = dd.edge_profiles.grid_ggd[grid_ggd_idx]
         extended_subs = 1:5
         orig_subs = [
-            deepcopy(get_grid_subset(grid_ggd, i)) for
+            deepcopy(IMASggd.get_grid_subset(grid_ggd, i)) for
             i ∈ extended_subs
         ]
         cfn = SOLPS2ctrl.cached_mesh_extension!(dd, eqdsk, b2fgmtry; clear_cache=true)
@@ -234,9 +187,9 @@ if args["edge_profile_extension"]
         )
         for j ∈ extended_subs
             orig_sub = orig_subs[j]
-            std_sub = get_grid_subset(grid_ggd, -j)
-            all_sub = get_grid_subset(grid_ggd, j)
-            ext_sub = get_grid_subset(grid_ggd, -200 - j)
+            std_sub = IMASggd.get_grid_subset(grid_ggd, -j)
+            all_sub = IMASggd.get_grid_subset(grid_ggd, j)
+            ext_sub = IMASggd.get_grid_subset(grid_ggd, -200 - j)
             orig_indices = [ele.object[1].index for ele ∈ orig_sub.element]
             std_indices = [ele.object[1].index for ele ∈ std_sub.element]
             all_indices = [ele.object[1].index for ele ∈ all_sub.element]
@@ -268,7 +221,7 @@ if args["edge_profile_extension"]
     end
 end
 
-if args["heavy_utilities"]
+if isempty(ARGS) || "heavy" in ARGS
     @testset "heavy_utilities" begin
         # Test for finding files in allowed folders
         file_list = define_default_sample_set()
@@ -319,7 +272,7 @@ if args["heavy_utilities"]
     end
 end
 
-if args["repair_eq"]
+if isempty(ARGS) || "repair" in ARGS
     @testset "repair_eq" begin
         # Prepare sample
         dd = IMAS.dd()
@@ -341,7 +294,7 @@ if args["repair_eq"]
     end
 end
 
-if args["geqdsk_to_imas"]
+if isempty(ARGS) || "geqdsk" in ARGS
     @testset "geqdsk_to_imas" begin
         sample_files =
             (splitdir(pathof(SOLPS2ctrl))[1] * "/../sample/") .* [
@@ -439,7 +392,7 @@ if args["geqdsk_to_imas"]
     end
 end
 
-if args["preparation"]
+if isempty(ARGS) || "prep" in ARGS
     @testset "preparation" begin
         eqdsk_file = "geqdsk_iter_small_sample"
         sample_paths = [
@@ -469,7 +422,7 @@ if args["preparation"]
     end
 end
 
-if args["system_id"]
+if isempty(ARGS) || "sysid" in ARGS
     @testset "system_id" begin
         case = "$(@__DIR__)/../sample/D3D_Lore_Time_Dep"
         println("Reading interferometer data...")
@@ -576,7 +529,7 @@ if args["system_id"]
         )
 
         # Non-linear input + 3rd order linear fit
-        nonlin_plant_3, p_opt = system_id_optimal_input_cond(
+        nonlin_plant_3, p_opt = system_id_optimal_inp_cond(
             input_gas, ne_uniform, tt, 3, inp_cond, Dict{Symbol, Any}(:p => -0.2);
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
@@ -593,10 +546,279 @@ if args["system_id"]
             nonlin_plant_3, input_gas;
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
-            input_cond=inp_cond, input_cond_kwargs=p_opt)
+            inp_cond=inp_cond, inp_cond_kwargs=p_opt)
 
-        @test sqrt(mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
+        @test sqrt(Statistics.mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
 
-        @test sqrt(mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
+        @test sqrt(Statistics.mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
+    end
+end
+
+if isempty(ARGS) || "state" in ARGS
+    @testset "state_pred" begin
+        nu = rand(1:10, 1)[1]
+        ny = rand(1:nu, 1)[1]
+        nstates = rand(1:10, 1)[1]
+        hh = 20
+        rnd_model = ssrand(ny, nu, nstates;
+            proper=false,
+            stable=true,
+            Ts=0.001,
+        )
+        LL, MM, NN, OO = SOLPS2ctrl._calculate_LMNO(rnd_model, hh)
+
+        x0 = rand(Float64, size(rnd_model.A, 1))
+        test_u = randn((size(rnd_model.B, 2), hh))
+        test_y, _, test_x, _ = lsim(rnd_model, test_u; x0)
+        final_x = rnd_model.A * test_x[:, end] + rnd_model.B * test_u[:, end]
+
+        test_U = zeros(size(rnd_model.B, 2) * hh)
+        test_Y = zeros(size(rnd_model.C, 1) * hh)
+        for i ∈ 1:hh
+            test_U[(size(rnd_model.B, 2)*(i-1)+1):(size(rnd_model.B, 2)*i)] =
+                test_u[:, i]
+            test_Y[(size(rnd_model.C, 1)*(i-1)+1):(size(rnd_model.C, 1)*i)] =
+                test_y[:, i]
+        end
+        test_est_Y = LL * x0 + MM * test_U
+        test_est_x = NN * x0 + OO * test_U
+
+        # println(sqrt(Statistics.mean((test_est_Y - test_Y) .^ 2)))
+        # println(sqrt(Statistics.mean((test_est_x - final_x) .^ 2)))
+        @test isapprox(test_est_Y, test_Y)
+        @test isapprox(test_est_x, final_x)
+
+        noise_scale = 1e-3
+
+        set_u_off = randn() * noise_scale
+        test_U_mod = test_U .+ set_u_off
+
+        set_y_off = randn() * noise_scale
+        test_Y_mod = test_Y .+ set_y_off
+
+        YY2x, UU2x = state_prediction_matrices(rnd_model, hh)
+        test_est_x2 = YY2x * test_Y_mod + UU2x * test_U_mod
+        # println(sqrt(Statistics.mean((test_est_x2 - final_x) .^ 2)))
+        @test isapprox(test_est_x2, final_x; rtol=10 * noise_scale)
+    end
+end
+
+if isempty(ARGS) || "controller" in ARGS
+    @testset "controller" begin
+        # Random 2-pole plant model with resonance between 100 and 200 Hz
+        # and Q value between 1 to 6 and a gain of 3.0
+        s = tf('s')
+        imp = rand(200.0:0.001:300.0)
+        rep = rand(-200:0.001:-50)
+        abs2 = rep^2 + imp^2
+        den = s^2 - 2 * rep * s + abs2
+        Ts = 0.001 # Sampling period of discrete system
+        plant_model = c2d(ss(abs2 * 3 / den), Ts)
+        delay_steps = 100
+        delay_model = delay(delay_steps * Ts, Ts)
+
+        # Define an actuator for the plant model
+        # Actuator must be a mutable struct and daughter of Actuator type
+        mutable struct TestAct <: Actuator
+            latency::DelayedActuator
+            bounds::Tuple{Vector{Float64}, Vector{Float64}}
+            gain::Float64
+        end
+        # And all actuators must be callable
+        # Here we make this non-linear actuator where the gain is shaped as arctan
+        # as a function of inp and gets clipped at bounds.
+        # (ta::TestAct)(inp::Vector{Float64}) = ta.latency(inp .* ta.gain)
+        function (ta::TestAct)(inp::Vector{Float64})
+            w = 0.125 .* (ta.bounds[2] - ta.bounds[1])
+            return ta.latency(
+                clamp(
+                    ta.gain .* w .* atan.(inp ./ w),
+                    ta.bounds[1],
+                    ta.bounds[2],
+                ),
+            )
+        end
+        # Now create an instance of this actuator with gain 5 and delay of 10 time steps
+        act = TestAct(DelayedActuator(delay_steps), ([-0.3], [0.3]), 5.0)
+
+        test_act = deepcopy(act)
+        test_range = -0.1:0.001:0.1
+        test_inp = [collect(test_range); zeros(test_act.latency.delay)]
+        test_inp = Matrix(test_inp')
+        test_out = zeros(size(test_inp))
+        for ii ∈ eachindex(test_inp[1, :])
+            test_out[:, ii] = test_act(test_inp[:, ii])
+        end
+        plot(
+            test_inp[1:length(test_range)], test_out[(test_act.latency.delay+1):end];
+            xlabel="Input Command to Actuator",
+            ylabel="Output from Actuator",
+            linewidth=2,
+            legend=false,
+        )
+        savefig("$(@__DIR__)/Test_Actuator_Function.pdf")
+
+        # Finally, design a linear controller using pid
+        lc = LinearController(c2d(ss(pid(0.1, 0.1 / 10)), Ts), zeros(Float64, 1))
+
+        # Reduce controller gain to ensure stability taking into account the delay
+        w = collect(logrange(0.1, 1e3, 400))
+        pm = -200
+        gm = -1
+        while pm < 30 || gm < 3
+            wgm, gm, wpm, pm =
+                margin(plant_model * act.gain * delay_model * lc.ctrl_ss, w)
+            pm = pm[1, 1, 1]
+            gm = gm[1, 1, 1]
+            if pm < 30 || gm < 3
+                lc.ctrl_ss *= 0.9 # Reduce gain slightly
+            end
+        end
+
+        # Create PVLC and another instance of actuator for this run
+        pvlc = PVLC(c2d(ss(pid(1.0, 1.0 / 10)), Ts), zeros(Float64, 1), plant_model, 20)
+        act2 = deepcopy(act)
+
+        # Tune PVLC controller for no delay
+        pm = -200
+        gm = -1
+        while pm < 30 || gm < 3
+            w = collect(logrange(0.1, 1e3, 400))
+            wgm, gm, wpm, pm = margin(plant_model * act2.gain * pvlc.ctrl_ss, w)
+            pm = pm[1, 1, 1]
+            gm = gm[1, 1, 1]
+            if pm < 30 || gm < 3
+                pvlc.ctrl_ss *= 0.9
+            end
+        end
+
+        # Create MPC
+        act3 = deepcopy(act)
+        horizon = 50    # Number of steps in future after latency
+        nopt = 5        # Number of optimization points in horizon window
+        opt_every = 10  # Run cost optimization every opt_every steps
+        mpc = MPC(
+            plant_model, 20, act3, horizon, nopt, opt_every;
+            ctrl_out_bounds=act3.bounds .* 2.0 ./ act3.gain,
+        )
+
+        # Set a target waveform
+        tt = collect(0:Ts:2)
+        set_points_tt = [0.0, 0.1, 0.5, 0.7, 1.3, 1.5, 1.7, 2.0]
+        set_points = [0.0, 0.0, 1.0, 1.0, -0.5, -0.5, 0.0, 0.0]
+        target = Matrix{Float64}(
+            Interpolations.linear_interpolation(set_points_tt, set_points).(tt)',
+        )
+
+        # Create some noise
+        noise_std = 1e-2
+        noise_plant_inp =
+            randn(Float64, (size(plant_model.B, 2), size(target, 2))) * noise_std
+        noise_plant_out =
+            randn(Float64, (size(plant_model.C, 1), size(target, 2))) * noise_std
+        noise_ctrl_out =
+            randn(Float64, (size(plant_model.B, 2), size(target, 2))) * noise_std
+
+        # Run closed loop simulation
+        res = Dict()
+        print("Simulation time $(length(target)) steps, PI: ")
+        @time res["PI"] = run_closed_loop_sim(
+            plant_model, act, lc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
+        print("Simulation time $(length(target)) steps, PVLC: ")
+        @time res["PVLC"] = run_closed_loop_sim(
+            plant_model, act2, pvlc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
+        print("Simulation time $(length(target)) steps, MPC: ")
+        @time res["MPC"] = run_closed_loop_sim(
+            plant_model, act3, mpc, target;
+            noise_plant_inp, noise_plant_out, noise_ctrl_out,
+        )
+        println()
+
+        p1 = plot(
+            tt, res["PI"][:target][1, :];
+            label="Target", linewidth=2, linestyle=:dash, color=:black,
+        )
+        plot!(
+            tt, res["PI"][:plant_out][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:plant_out][1, :];
+            label="PVLC", ylabel="Plant Output", linewidth=2, color=:orange,
+            xformatter=_ -> "", topmargin=10Plots.mm,
+        )
+        plot!(
+            tt, res["MPC"][:plant_out][1, :];
+            label="MPC", ylabel="Plant Output", xformatter=_ -> "",
+            linewidth=2, color=:darkgreen,
+        )
+        p2 = plot(
+            tt, res["PI"][:plant_inp][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:plant_inp][1, :];
+            label="PVLC", ylabel="Plant Input", xformatter=_ -> "",
+            linewidth=2, color=:orange,
+        )
+        plot!(
+            tt, res["MPC"][:plant_inp][1, :];
+            label="MPC", ylabel="Plant Input", xformatter=_ -> "",
+            linewidth=2, color=:darkgreen,
+            legend=false,
+        )
+        p3 = plot(
+            tt, res["PI"][:ctrl_out][1, :];
+            label="PI", linewidth=2, color=:deepskyblue3,
+        )
+        plot!(
+            tt, res["PVLC"][:ctrl_out][1, :];
+            label="PVLC", ylabel="Controller\nOutput", xlabel="Time / s",
+            linewidth=2, color=:orange,
+        )
+        plot!(
+            tt, res["MPC"][:ctrl_out][1, :];
+            label="MPC", ylabel="Controller\nOutput", xlabel="Time / s",
+            linewidth=2, color=:darkgreen,
+            legend=false,
+        )
+        l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
+        plot(
+            p1, p2, p3;
+            layout=l,
+            suptitle=(
+                "Closed Loop Simulation Results\n" *
+                "Actuator has delay of $(act.latency.delay * Ts)s."
+            ),
+        )
+
+        savefig("$(@__DIR__)/Closed_Loop_Sim_Results.pdf")
+
+        residual_LC = sqrt(
+            Statistics.mean(
+                (res["PI"][:target][1, :] .- res["PI"][:plant_out][1, :]) .^ 2,
+            ),
+        )
+
+        residual_PVLC = sqrt(
+            Statistics.mean(
+                (res["PVLC"][:target][1, :] .- res["PVLC"][:plant_out][1, :]) .^ 2,
+            ),
+        )
+
+        residual_MPC = sqrt(
+            Statistics.mean(
+                (res["MPC"][:target][1, :] .- res["MPC"][:plant_out][1, :]) .^ 2,
+            ),
+        )
+
+        @test residual_PVLC < residual_LC
+        @test residual_MPC < residual_PVLC
     end
 end
