@@ -407,7 +407,7 @@ There is a convinience contructor:
         act::Actuator,               # Actuator model without delay
         horizon::Int,                # Number of steps in future after latency
         nopt::Int,                   # Number of optimization points in horizon window
-        opt_every::Int,              # Run cost optimization every opt_every steps
+        opt_every::Int;              # Run cost optimization every opt_every steps
         ctrl_out_bounds::Tuple{Vector{Float64}, Vector{Float64}}=(
             Array{Float64}(undef, 0),
             Array{Float64}(undef, 0),
@@ -472,7 +472,7 @@ mutable struct MPC <: Controller
         act::Actuator,               # Actuator model without delay
         horizon::Int,                # Number of steps in future after latency
         nopt::Int,                   # Number of optimization points in horizon window
-        opt_every::Int,              # Run cost optimization every opt_every steps
+        opt_every::Int;              # Run cost optimization every opt_every steps
         ctrl_out_bounds::Tuple{Vector{Float64}, Vector{Float64}}=(
             Array{Float64}(undef, 0),
             Array{Float64}(undef, 0),

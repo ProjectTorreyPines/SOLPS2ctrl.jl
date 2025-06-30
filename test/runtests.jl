@@ -621,13 +621,42 @@ if isempty(ARGS) || "controller" in ARGS
         # Actuator must be a mutable struct and daughter of Actuator type
         mutable struct TestAct <: Actuator
             latency::DelayedActuator
+            bounds::Tuple{Vector{Float64}, Vector{Float64}}
             gain::Float64
         end
         # And all actuators must be callable
-        # Here we make this a simple gain actuator with some latency
-        (ta::TestAct)(inp::Vector{Float64}) = ta.latency(inp .* ta.gain)
+        # Here we make this non-linear actuator where the gain is shaped as arctan
+        # as a function of inp and gets clipped at bounds.
+        # (ta::TestAct)(inp::Vector{Float64}) = ta.latency(inp .* ta.gain)
+        function (ta::TestAct)(inp::Vector{Float64})
+            w = 0.125 .* (ta.bounds[2] - ta.bounds[1])
+            return ta.latency(
+                clamp(
+                    ta.gain .* w .* atan.(inp ./ w),
+                    ta.bounds[1],
+                    ta.bounds[2],
+                ),
+            )
+        end
         # Now create an instance of this actuator with gain 5 and delay of 10 time steps
-        act = TestAct(DelayedActuator(delay_steps), 5.0)
+        act = TestAct(DelayedActuator(delay_steps), ([-0.3], [0.3]), 5.0)
+
+        test_act = deepcopy(act)
+        test_range = -0.1:0.001:0.1
+        test_inp = [collect(test_range); zeros(test_act.latency.delay)]
+        test_inp = Matrix(test_inp')
+        test_out = zeros(size(test_inp))
+        for ii ∈ eachindex(test_inp[1, :])
+            test_out[:, ii] = test_act(test_inp[:, ii])
+        end
+        plot(
+            test_inp[1:length(test_range)], test_out[(test_act.latency.delay+1):end];
+            xlabel="Input Command to Actuator",
+            ylabel="Output from Actuator",
+            linewidth=2,
+            legend=false,
+        )
+        savefig("$(@__DIR__)/Test_Actuator_Function.pdf")
 
         # Finally, design a linear controller using pid
         lc = LinearController(c2d(ss(pid(0.1, 0.1 / 10)), Ts), zeros(Float64, 1))
@@ -648,7 +677,7 @@ if isempty(ARGS) || "controller" in ARGS
 
         # Create PVLC and another instance of actuator for this run
         pvlc = PVLC(c2d(ss(pid(1.0, 1.0 / 10)), Ts), zeros(Float64, 1), plant_model, 20)
-        act2 = TestAct(DelayedActuator(delay_steps), 5.0)
+        act2 = deepcopy(act)
 
         # Tune PVLC controller for no delay
         pm = -200
@@ -664,11 +693,14 @@ if isempty(ARGS) || "controller" in ARGS
         end
 
         # Create MPC
-        act3 = TestAct(DelayedActuator(delay_steps), 5.0)
+        act3 = deepcopy(act)
         horizon = 50    # Number of steps in future after latency
         nopt = 5        # Number of optimization points in horizon window
         opt_every = 10  # Run cost optimization every opt_every steps
-        mpc = MPC(plant_model, 20, act3, horizon, nopt, opt_every)
+        mpc = MPC(
+            plant_model, 20, act3, horizon, nopt, opt_every;
+            ctrl_out_bounds=act3.bounds .* 1.1 ./ act3.gain,
+        )
 
         # Set a target waveform
         tt = collect(0:Ts:2)
@@ -739,6 +771,7 @@ if isempty(ARGS) || "controller" in ARGS
             tt, res["MPC"][:plant_inp][1, :];
             label="MPC", ylabel="Plant Input", xformatter=_ -> "",
             linewidth=2, color=:darkgreen,
+            legend=false,
         )
         p3 = plot(
             tt, res["PI"][:ctrl_out][1, :];
@@ -753,6 +786,7 @@ if isempty(ARGS) || "controller" in ARGS
             tt, res["MPC"][:ctrl_out][1, :];
             label="MPC", ylabel="Controller\nOutput", xlabel="Time / s",
             linewidth=2, color=:darkgreen,
+            legend=false,
         )
         l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
         plot(
