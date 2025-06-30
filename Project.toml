@@ -1,7 +1,7 @@
 name = "SOLPS2ctrl"
 uuid = "a531d12f-ac8a-43e8-b6d9-bd121431dd49"
 authors = ["David Eldon <eldond@fusion.gat.com>"]
-version = "2.2.0"
+version = "2.2.1"
 
 [deps]
 Contour = "d38c429a-6771-53c6-b99e-75d170b6e991"
