@@ -699,7 +699,7 @@ if isempty(ARGS) || "controller" in ARGS
         opt_every = 10  # Run cost optimization every opt_every steps
         mpc = MPC(
             plant_model, 20, act3, horizon, nopt, opt_every;
-            ctrl_out_bounds=act3.bounds .* 1.1 ./ act3.gain,
+            ctrl_out_bounds=act3.bounds .* 2.0 ./ act3.gain,
         )
 
         # Set a target waveform
@@ -750,8 +750,8 @@ if isempty(ARGS) || "controller" in ARGS
         )
         plot!(
             tt, res["PVLC"][:plant_out][1, :];
-            label="PVLC", ylabel="Plant Output", xformatter=_ -> "",
-            linewidth=2, color=:orange,
+            label="PVLC", ylabel="Plant Output", linewidth=2, color=:orange,
+            xformatter=_ -> "", topmargin=10Plots.mm,
         )
         plot!(
             tt, res["MPC"][:plant_out][1, :];

@@ -546,12 +546,6 @@ function (mpc::MPC)(;
     opt_step = ii > mpc.opt_every + mpc.last_opt
     buf_empty = isempty(mpc.ctrl_out_buffer)
 
-    if buf_empty
-        prev_ctrl_out = zeros(Float64, size(mpc.plant.B, 2))
-    else
-        prev_ctrl_out = first(mpc.ctrl_out_buffer)
-    end
-
     if enough_history && enough_future && (opt_step || buf_empty)
         red_steps = 1:div(mpc.horizon, mpc.nopt-1):(mpc.horizon+1)
         lower = repeat(mpc.ctrl_out_bounds[1], length(red_steps))
@@ -567,7 +561,7 @@ function (mpc::MPC)(;
         # Prepare arguments for cost optimization
         mpc.act = deepcopy(act)
         target_vec = vec(target[:, (ii+1):(ii+fut_lookup)])
-        guess = repeat(prev_ctrl_out, length(red_steps))
+        guess = repeat(zeros(Float64, ninps), length(red_steps))
         inp_ff = inp_feedforward[:, (ii+1):(ii+fut_lookup)]
 
         # Optimize
