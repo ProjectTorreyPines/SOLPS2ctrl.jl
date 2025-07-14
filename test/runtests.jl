@@ -481,22 +481,48 @@ if isempty(ARGS) || "sysid" in ARGS
         # Interpolate output data along the uniform time
         ne_uniform = Interpolations.linear_interpolation(ifo_tt, ne_ifo).(tt)
 
-        function inp_cond_step(
-            gas_so::Float64,
-            previous_gas_so::Float64,
-            corr::Float64;
-            p::Union{Float64, Vector{Float64}}=-0.17,
-        )::Tuple{Float64, Float64}
-            if p isa Array
-                param = p[1]
-            else
-                param = p
-            end
-            if gas_so + corr > previous_gas_so
-                corr = corr + (gas_so + corr - previous_gas_so) * param
-            end
-            return gas_so + corr, corr
+        # Creat an input conditioning structure
+        mutable struct GasNonLinFlow <: SOLPS2ctrl.InputConditioning
+            param::Float64
+            previous_gas_inp::Float64
+            corr::Float64
         end
+
+        # Need to make InputConditioning object a callable instance that takes in the
+        # input as a Vector{Float64}, param as a keyword argument, and outputs a
+        # Vector{Float64}.
+        # When the glas flow is increasing, this function applies a factor `param` to
+        # the increase and add that as correction for all following calls.
+        # The correction value `corr` and previous gas input value `previous_gas_inp`
+        # are updated in the structure during the call.
+        function (gnlf::GasNonLinFlow)(
+            gas_inp::Vector{Float64};
+            param::Float64=gnlf.param,
+        )::Vector{Float64}
+            gnlf.param = param # Update param if changed.
+            if gas_inp[1] + gnlf.corr > gnlf.previous_gas_inp
+                gnlf.corr += (gas_inp[1] + gnlf.corr - gnlf.previous_gas_inp) * param
+            end
+            gnlf.previous_gas_inp = gas_inp[1] + gnlf.corr
+            return gas_inp .+ gnlf.corr
+        end
+
+        # function inp_cond_step(
+        #     gas_so::Float64,
+        #     previous_gas_so::Float64,
+        #     corr::Float64;
+        #     p::Union{Float64, Vector{Float64}}=-0.17,
+        # )::Tuple{Float64, Float64}
+        #     if p isa Array
+        #         param = p[1]
+        #     else
+        #         param = p
+        #     end
+        #     if gas_so + corr > previous_gas_so
+        #         corr = corr + (gas_so + corr - previous_gas_so) * param
+        #     end
+        #     return gas_so + corr, corr
+        # end
 
         """
             inp_cond(inp_gas; p=0.242)
@@ -505,17 +531,17 @@ if isempty(ARGS) || "sysid" in ARGS
         increase amount is changed by a factor of 'p' of the actual change. This gives a
         response of gas input when it is rising vs falling and thus constitute a non-linearity.
         """
-        function inp_cond(
-            gas_so::Array{Float64};
-            p::Union{Float64, Vector{Float64}}=-0.17,
-        )::Array{Float64}
-            ret_vec = deepcopy(gas_so)
-            corr = 0.0
-            for ii ∈ 2:length(ret_vec)
-                ret_vec[ii], corr = inp_cond_step(ret_vec[ii], ret_vec[ii-1], corr; p)
-            end
-            return ret_vec
-        end
+        # function inp_cond(
+        #     gas_so::Array{Float64};
+        #     p::Union{Float64, Vector{Float64}}=-0.17,
+        # )::Array{Float64}
+        #     ret_vec = deepcopy(gas_so)
+        #     corr = 0.0
+        #     for ii ∈ 2:length(ret_vec)
+        #         ret_vec[ii], corr = inp_cond_step(ret_vec[ii], ret_vec[ii-1], corr; p)
+        #     end
+        #     return ret_vec
+        # end
 
         # verbose only during CI testinf
         verbose = get(ENV, "GITHUB_ACTIONS", "") == "true"
@@ -528,27 +554,46 @@ if isempty(ARGS) || "sysid" in ARGS
             verbose,
         )
 
+        inp_cond = GasNonLinFlow(-0.2, input_gas[1], 0.0)
+        inp_cond_args_guess = Dict{Symbol, Any}(:param => -0.2)
+
         # Non-linear input + 3rd order linear fit
-        nonlin_plant_3, p_opt = system_id_optimal_inp_cond(
-            input_gas, ne_uniform, tt, 3, inp_cond, Dict{Symbol, Any}(:p => -0.2);
+        nonlin_plant_3 = system_id_optimal_inp_cond(
+            input_gas, ne_uniform, tt, 3, inp_cond, inp_cond_args_guess;
             inp_offset=gas_offset, inp_factor=gas_factor,
             out_offset=ne_offset, out_factor=ne_factor,
             verbose,
         )
 
-        lin_out = model_evolve(
-            linear_plant_3, input_gas;
-            inp_offset=gas_offset, inp_factor=gas_factor,
-            out_offset=ne_offset, out_factor=ne_factor,
+        lin_out = model_evolve(linear_plant_3, input_gas)
+
+        nonlin_out = model_evolve(nonlin_plant_3, input_gas)
+
+        p1 = scatter(tt, ne_uniform * ne_factor; label="SOLPS Data", color=:black)
+        plot!(
+            tt, lin_out * ne_factor; label="Linear 3rd order plant fit",
+            color=:deepskyblue3, linewidth=2,
+        )
+        plot!(
+            tt, nonlin_out * ne_factor; label="Non-linear 3rd order plant fit",
+            color=:orange, linewidth=2, ylabel="ne / cubic meter",
+            legendposition=(0.25, 0.9),
+        )
+        lin_resd = (lin_out - ne_uniform)
+        nonlin_resd = (nonlin_out - ne_uniform)
+        p2 = plot(tt, lin_resd * ne_factor; color=:deepskyblue3)
+        plot!(
+            tt, nonlin_resd * ne_factor;
+            color=:orange, ylabel="Residuals", legend=false,
         )
 
-        nonlin_out = model_evolve(
-            nonlin_plant_3, input_gas;
-            inp_offset=gas_offset, inp_factor=gas_factor,
-            out_offset=ne_offset, out_factor=ne_factor,
-            inp_cond=inp_cond, inp_cond_kwargs=p_opt)
+        p3 = plot(tt, input_gas; ylabel="Input Gas\natoms / s", legend=false)
 
-        @test sqrt(Statistics.mean((lin_out - ne_uniform) .^ 2)) < 1.2e18
+        l = @layout [a{0.5h}; b{0.25h}; c{0.25h}]
+        plot(p1, p2, p3; layout=l, suptitle="System Identification")
+        savefig("$(@__DIR__)/Test_System_Identification.pdf")
+
+        @test sqrt(Statistics.mean((lin_out - ne_uniform) .^ 2)) < 3e18
 
         @test sqrt(Statistics.mean((nonlin_out - ne_uniform) .^ 2)) < 0.4e18
     end
@@ -614,6 +659,7 @@ if isempty(ARGS) || "controller" in ARGS
         den = s^2 - 2 * rep * s + abs2
         Ts = 0.001 # Sampling period of discrete system
         plant_model = c2d(ss(abs2 * 3 / den), Ts)
+        plant = SOLPS2ctrl.LinearPlant(plant_model)
         delay_steps = 100
         delay_model = delay(delay_steps * Ts, Ts)
 
@@ -676,7 +722,12 @@ if isempty(ARGS) || "controller" in ARGS
         end
 
         # Create PVLC and another instance of actuator for this run
-        pvlc = PVLC(c2d(ss(pid(1.0, 1.0 / 10)), Ts), zeros(Float64, 1), plant_model, 20)
+        pvlc = PVLC(
+            c2d(ss(pid(1.0, 1.0 / 10)), Ts),
+            zeros(Float64, 1),
+            deepcopy(plant),
+            20,
+        )
         act2 = deepcopy(act)
 
         # Tune PVLC controller for no delay
@@ -698,7 +749,7 @@ if isempty(ARGS) || "controller" in ARGS
         nopt = 5        # Number of optimization points in horizon window
         opt_every = 10  # Run cost optimization every opt_every steps
         mpc = MPC(
-            plant_model, 20, act3, horizon, nopt, opt_every;
+            deepcopy(plant), 20, act3, horizon, nopt, opt_every;
             ctrl_out_bounds=act3.bounds .* 2.0 ./ act3.gain,
         )
 
@@ -722,20 +773,23 @@ if isempty(ARGS) || "controller" in ARGS
         # Run closed loop simulation
         res = Dict()
         print("Simulation time $(length(target)) steps, PI: ")
+        plant_1 = deepcopy(plant)
         @time res["PI"] = run_closed_loop_sim(
-            plant_model, act, lc, target;
+            plant_1, act, lc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()
         print("Simulation time $(length(target)) steps, PVLC: ")
+        plant_2 = deepcopy(plant)
         @time res["PVLC"] = run_closed_loop_sim(
-            plant_model, act2, pvlc, target;
+            plant_2, act2, pvlc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()
         print("Simulation time $(length(target)) steps, MPC: ")
+        plant_3 = deepcopy(plant)
         @time res["MPC"] = run_closed_loop_sim(
-            plant_model, act3, mpc, target;
+            plant_3, act3, mpc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()

@@ -3,48 +3,7 @@ import ControlSystemIdentification: iddata, newpem, PredictionStateSpace
 import LinearAlgebra: I, inv
 import LsqFit: curve_fit, coef
 
-export offset_scale,
-    unscale_unoffset, model_evolve, system_id,
-    system_id_optimal_inp_cond
-
-"""
-    offset_scale(
-        val::Union{Float64, Vector{Float64}, Matrix{Float64}};
-        offset::Union{Float64, Vector{Float64}}=0.0,
-        factor::Union{Float64, Vector{Float64}}=1.0,
-    )::typeof(val)
-
-Subtract an `offset` and multiply by a `factor`, the `val` to make it nominally in the
-range of -1 to 1 (not strictly) for easy identification of system.
-
-    (val .- offset) .* factor
-"""
-function offset_scale(
-    val::Union{Float64, Vector{Float64}, Matrix{Float64}};
-    offset::Union{Float64, Vector{Float64}}=0.0,
-    factor::Union{Float64, Vector{Float64}}=1.0,
-)::typeof(val)
-    return (val .- offset) .* factor
-end
-
-"""
-    unscale_unoffset(
-        offset_scaled::Union{Float64, Vector{Float64}, Matrix{Float64}};
-        offset::Union{Float64, Vector{Float64}}=0.0,
-        factor::Union{Float64, Vector{Float64}}=1.0,
-    )::typeof(offset_scaled)
-
-Undo previously applied offset and scaling.
-
-    offset_scaled ./ factor .+ offset
-"""
-function unscale_unoffset(
-    offset_scaled::Union{Float64, Vector{Float64}, Matrix{Float64}};
-    offset::Union{Float64, Vector{Float64}}=0.0,
-    factor::Union{Float64, Vector{Float64}}=1.0,
-)::typeof(offset_scaled)
-    return offset_scaled ./ factor .+ offset
-end
+export model_evolve, system_id, system_id_optimal_inp_cond
 
 """
     system_id(
@@ -52,9 +11,9 @@ end
         out::Union{Vector{Float64}, Matrix{Float64}},
         tt::Vector{Float64},
         order::Int;
-        inp_cond::Union{Nothing, Function}=nothing,
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
+        inp_cond::Union{Nothing, InputConditioning}=nothing,
         inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
         newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
         verbose::Bool=false,
@@ -64,7 +23,7 @@ Perform system identification for a set on input data `inp`, output data `out`, 
 time series vector `tt`. If there are more than one inputs or outputs, provide them as
 Matrix with first dimension for ports (input or output) and second dimension for time.
 
-If `inp_cond` is provided, it is applied to offseted and scaled input before
+If `inp_cond` is provided, it is applied before offsetting and scaling for
 performing system identification with keywords for this function provided in
 `inp_cond_kwargs`.
 
@@ -80,24 +39,27 @@ function system_id(
     out::Union{Vector{Float64}, Matrix{Float64}},
     tt::Vector{Float64},
     order::Int;
-    inp_cond::Union{Nothing, Function}=nothing,
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
+    inp_cond::Union{Nothing, InputConditioning}=nothing,
     inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
     newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
     verbose::Bool=false,
 ) where {T, U}
     @assert size(inp)[end] == size(out)[end] == length(tt)
-    inp_so = offset_scale(inp; offset=inp_offset, factor=inp_factor)
-    if !isnothing(inp_cond)
-        inp_so = inp_cond(inp_so; inp_cond_kwargs...)
-    end
-    u = Matrix{Float64}[]
-    if isa(inp_so, Vector)
-        u = Matrix(inp_so')
+    if isa(inp, Vector)
+        inp_m = Matrix(inp')
     else
-        u = inp_so
+        inp_m = inp
     end
+    inp_co = zeros(Float64, size(inp_m))
+    if !isnothing(inp_cond)
+        temp_inst = deepcopy(inp_cond)
+        for ii ∈ eachindex(tt)
+            inp_co[:, ii] = temp_inst(inp_m[:, ii]; inp_cond_kwargs...)
+        end
+    end
+    u = offset_scale(inp_co; offset=inp_offset, factor=inp_factor)
 
     out_so = offset_scale(out; offset=out_offset, factor=out_factor)
     v = Matrix{Float64}[]
@@ -119,54 +81,65 @@ function system_id(
     if !verbose
         redirect_stdout(original_stdout)
     end
-    return sys
+    linear_plant = LinearPlant(sys; inp_offset, inp_factor, out_offset, out_factor)
+    if isnothing(inp_cond)
+        return linear_plant
+    else
+        return InpCondLinPlant(linear_plant, inp_cond, inp_cond_kwargs)
+    end
 end
 
 """
     model_evolve(
-        sys::Union{PredictionStateSpace, StateSpace},
+        plant::Plant,
         inp::Union{Vector{Float64}, Matrix{Float64}};
         x0::Union{Nothing, Vector{Float64}}=nothing,
-        inp_cond::Union{Nothing, Function}=nothing,
-        inp_offset::Float64=0.0, inp_factor::Float64=1.0,
-        out_offset::Float64=0.0, out_factor::Float64=1.0,
-        inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
-    )::Union{Vector{Float64}, Matrix{Float64}} where {T}
+        initialize_x::Bool=false,
+    )
 
-Evolve a state space model `sys` with the input steps `inp`. The input is offseted and
-scaled with `inp_offset` and `inp_factor` and the output is unscaled and unoffseted
-with `out_offset` and `out_factor`. If a function is provided as `inp_cond` it is
-applied to the input after scaling and offseting along with any keywords passed for it.
+Evolve a plant model through a time series of inputs. If `inp` is a Matrix, the first
+dimension will hold different inputs and second dimension will be along time. If `inp`
+is a vector, it would be assumed that the model has a single input. If the model also
+happens to have a single output and `inp` is a vector, the returned outputs will be a
+vector as well. If `x0` is not provided, the stored state vector of the plant model will
+be used for initialization. If `initialize_x` is true, then the state vector of the
+plant model would be initialized to match first input value so that no sudden jumps
+happen.
 """
 function model_evolve(
-    sys::Union{PredictionStateSpace, StateSpace},
+    plant::Plant,
     inp::Union{Vector{Float64}, Matrix{Float64}};
     x0::Union{Nothing, Vector{Float64}}=nothing,
-    inp_cond::Union{Nothing, Function}=nothing,
-    inp_offset::Float64=0.0, inp_factor::Float64=1.0,
-    out_offset::Float64=0.0, out_factor::Float64=1.0,
-    inp_cond_kwargs::Dict{Symbol, T}=Dict{Symbol, Any}(),
-)::typeof(inp) where {T}
-    inp_so = offset_scale(inp; offset=inp_offset, factor=inp_factor)
-    if !isnothing(inp_cond)
-        inp_so = inp_cond(inp_so; inp_cond_kwargs...)
-    end
-    u = Matrix{Float64}[]
-    if isa(inp_so, Vector)
-        u = Matrix(inp_so')
+    initialize_x::Bool=false,
+)
+    if isa(inp, Vector)
+        inp_m = Matrix(inp')
     else
-        u = inp_so
+        inp_m = inp
+    end
+    temp_plant = deepcopy(plant)
+
+    lp = get_linear_plant(temp_plant)
+
+    if initialize_x
+        sys = lp.sys
+        initial_inp =
+            offset_scale(inp_m[:, 1]; offset=lp.inp_offset, factor=lp.inp_factor)
+        x0 = inv(Matrix{Float64}(I, size(sys.A)...) - sys.A) * sys.B * initial_inp
     end
 
-    if isnothing(x0)
-        x0 = inv(Matrix{Float64}(I, size(sys.A)...) - sys.A) * sys.B * u[:, 1]
+    if !isnothing(x0)
+        lp.x = x0
     end
-    modeled_out_so, _, x0, _ = lsim(sys, u; x0)
-    modeled_out = unscale_unoffset(modeled_out_so; offset=out_offset, factor=out_factor)
-    if isa(inp, Vector)
-        return modeled_out[1, :]
+
+    out_m = zeros(Float64, size(lp.sys.C, 1), size(inp_m, 2))
+    for ii ∈ axes(inp_m, 2)
+        out_m[:, ii] = temp_plant(inp_m[:, ii])
+    end
+    if isa(inp, Vector) && size(out_m, 1) == 1
+        return out_m[1, :]
     else
-        return modeled_out
+        return out_m
     end
 end
 
@@ -176,7 +149,7 @@ end
         out::Union{Vector{Float64}, Matrix{Float64}},
         tt::Vector{Float64},
         order::Int,
-        inp_cond::Union{Nothing, Function},
+        inp_cond::InputConditioning,
         inp_cond_args_guess::Dict{Symbol, T};
         inp_offset::Float64=0.0, inp_factor::Float64=1.0,
         out_offset::Float64=0.0, out_factor::Float64=1.0,
@@ -190,7 +163,7 @@ Perform system identification for a set on input data `inp`, output data `out`, 
 time series vector `tt`. If there are more than one inputs or outputs, provide them as
 Matrix with first dimension for ports (input or output) and second dimension for time.
 
-The `inp_cond` is applied to offseted and scaled input before performing system
+The `inp_cond` is applied before offsetting and scaling for performing system
 identification. The `inp_cond_args_guess` is used as initial keyword arguments that
 provide the parameters of the `inp_cond`. These arguments are then used to find the
 best fit while iteratively performing [`system_id`](@ref) in each step.
@@ -206,15 +179,15 @@ identification.
 For advanced use, it is recommended to do system identification directly with `newpem`
 and optimize using your favorite fitting method instead of using this function.
 
-Returns a linear state space model of the `order` and the keyword argument dictionary
-containing optimal parameters for `inp_cond` function.
+Returns a NonLinInpLinearPlant that has stored best fit parameters for the input
+non-linearity and a best fit linear model.
 """
 function system_id_optimal_inp_cond(
     inp::Union{Vector{Float64}, Matrix{Float64}},
     out::Union{Vector{Float64}, Matrix{Float64}},
     tt::Vector{Float64},
     order::Int,
-    inp_cond::Function,
+    inp_cond::InputConditioning,
     inp_cond_args_guess::Dict{Symbol, T};
     inp_offset::Float64=0.0, inp_factor::Float64=1.0,
     out_offset::Float64=0.0, out_factor::Float64=1.0,
@@ -226,35 +199,35 @@ function system_id_optimal_inp_cond(
     key_list = collect(keys(inp_cond_args_guess))
     function model(inp, param)
         inp_cond_kwargs = Dict(key => param[ii] for (ii, key) ∈ enumerate(key_list))
-        sys = system_id(
+        plant = system_id(
             inp, out, tt, order;
-            inp_cond, inp_offset, inp_factor, out_offset, out_factor,
-            inp_cond_kwargs,
+            inp_offset, inp_factor, out_offset, out_factor,
+            inp_cond, inp_cond_kwargs,
             newpem_kwargs, verbose,
         )
-        return model_evolve(
-            sys, inp;
-            inp_cond, inp_offset, inp_factor, out_offset, out_factor, inp_cond_kwargs,
-        )
+        return model_evolve(plant, inp; initialize_x=true)
     end
     guess = [inp_cond_args_guess[key] for key ∈ key_list]
-    lower = [
+    lower = Vector{Float64}(
+        [
         inp_cond_args_lower[key] for
         key ∈ key_list if key in keys(inp_cond_args_lower)
     ]
-    lower = [
+    )
+    upper = Vector{Float64}(
+        [
         inp_cond_args_upper[key] for
         key ∈ key_list if key in keys(inp_cond_args_upper)
     ]
+    )
 
-    fit_result = coef(curve_fit(model, inp, out, guess))
+    fit_result = coef(curve_fit(model, inp, out, guess; lower, upper))
     opt = Dict{Symbol, T}(key => fit_result[ii] for (ii, key) ∈ enumerate(key_list))
 
-    sys = system_id(
+    return system_id(
         inp, out, tt, order;
         inp_cond, inp_offset, inp_factor, out_offset, out_factor,
         inp_cond_kwargs=opt,
         newpem_kwargs, verbose,
     )
-    return sys, opt
 end
