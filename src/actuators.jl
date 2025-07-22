@@ -64,8 +64,12 @@ mutable struct DelayedActuator{U} <: Actuator
 end
 
 function (da::DelayedActuator)(inp::Union{Float64, Vector{Float64}})::Vector{Float64}
-    enqueue!(da.buffer, inp)
-    return dequeue!(da.buffer)
+    if da.delay > 0
+        enqueue!(da.buffer, inp)
+        return dequeue!(da.buffer)
+    else
+        return inp
+    end
 end
 
 function get_future_inp(act::Actuator)

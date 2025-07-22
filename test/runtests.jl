@@ -725,17 +725,16 @@ if isempty(ARGS) || "controller" in ARGS
         pvlc = PVLC(
             c2d(ss(pid(1.0, 1.0 / 10)), Ts),
             zeros(Float64, 1),
-            deepcopy(plant),
+            plant,
             20,
         )
-        act2 = deepcopy(act)
 
         # Tune PVLC controller for no delay
         pm = -200
         gm = -1
         while pm < 30 || gm < 3
             w = collect(logrange(0.1, 1e3, 400))
-            wgm, gm, wpm, pm = margin(plant_model * act2.gain * pvlc.ctrl_ss, w)
+            wgm, gm, wpm, pm = margin(plant_model * act.gain * pvlc.ctrl_ss, w)
             pm = pm[1, 1, 1]
             gm = gm[1, 1, 1]
             if pm < 30 || gm < 3
@@ -744,13 +743,12 @@ if isempty(ARGS) || "controller" in ARGS
         end
 
         # Create MPC
-        act3 = deepcopy(act)
         horizon = 50    # Number of steps in future after latency
         nopt = 5        # Number of optimization points in horizon window
         opt_every = 10  # Run cost optimization every opt_every steps
         mpc = MPC(
-            deepcopy(plant), 20, act3, horizon, nopt, opt_every;
-            ctrl_out_bounds=act3.bounds .* 2.0 ./ act3.gain,
+            deepcopy(plant), 20, act, horizon, nopt, opt_every;
+            ctrl_out_bounds=act.bounds .* 2.0 ./ act.gain,
         )
 
         # Set a target waveform
@@ -773,23 +771,20 @@ if isempty(ARGS) || "controller" in ARGS
         # Run closed loop simulation
         res = Dict()
         print("Simulation time $(length(target)) steps, PI: ")
-        plant_1 = deepcopy(plant)
         @time res["PI"] = run_closed_loop_sim(
-            plant_1, act, lc, target;
+            plant, act, lc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()
         print("Simulation time $(length(target)) steps, PVLC: ")
-        plant_2 = deepcopy(plant)
         @time res["PVLC"] = run_closed_loop_sim(
-            plant_2, act2, pvlc, target;
+            plant, act, pvlc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()
         print("Simulation time $(length(target)) steps, MPC: ")
-        plant_3 = deepcopy(plant)
         @time res["MPC"] = run_closed_loop_sim(
-            plant_3, act3, mpc, target;
+            plant, act, mpc, target;
             noise_plant_inp, noise_plant_out, noise_ctrl_out,
         )
         println()

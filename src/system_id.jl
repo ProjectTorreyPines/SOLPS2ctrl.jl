@@ -52,13 +52,17 @@ function system_id(
     else
         inp_m = inp
     end
-    inp_co = zeros(Float64, size(inp_m))
+
     if !isnothing(inp_cond)
         temp_inst = deepcopy(inp_cond)
+        inp_co = zeros(Float64, size(inp_m))
         for ii ∈ eachindex(tt)
             inp_co[:, ii] = temp_inst(inp_m[:, ii]; inp_cond_kwargs...)
         end
+    else
+        inp_co = inp_m
     end
+
     u = offset_scale(inp_co; offset=inp_offset, factor=inp_factor)
 
     out_so = offset_scale(out; offset=out_offset, factor=out_factor)
@@ -156,6 +160,7 @@ end
         inp_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
         inp_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
         newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
+        curve_fit_kwargs::Dict{Symbol, X}=Dict{Symbol, Any}(),
         verbose::Bool=false,
     ) where {T, U, V, W}
 
@@ -194,8 +199,9 @@ function system_id_optimal_inp_cond(
     inp_cond_args_lower::Dict{Symbol, V}=Dict{Symbol, Any}(),
     inp_cond_args_upper::Dict{Symbol, W}=Dict{Symbol, Any}(),
     newpem_kwargs::Dict{Symbol, U}=Dict{Symbol, Any}(),
+    curve_fit_kwargs::Dict{Symbol, X}=Dict{Symbol, Any}(),
     verbose::Bool=false,
-) where {T, U, V, W}
+) where {T, U, V, W, X}
     key_list = collect(keys(inp_cond_args_guess))
     function model(inp, param)
         inp_cond_kwargs = Dict(key => param[ii] for (ii, key) ∈ enumerate(key_list))
@@ -221,13 +227,14 @@ function system_id_optimal_inp_cond(
     ]
     )
 
-    fit_result = coef(curve_fit(model, inp, out, guess; lower, upper))
+    fit_result =
+        coef(curve_fit(model, inp, out, guess; lower, upper, curve_fit_kwargs...))
     opt = Dict{Symbol, T}(key => fit_result[ii] for (ii, key) ∈ enumerate(key_list))
 
     return system_id(
         inp, out, tt, order;
-        inp_cond, inp_offset, inp_factor, out_offset, out_factor,
-        inp_cond_kwargs=opt,
+        inp_offset, inp_factor, out_offset, out_factor,
+        inp_cond, inp_cond_kwargs=opt,
         newpem_kwargs, verbose,
     )
 end
