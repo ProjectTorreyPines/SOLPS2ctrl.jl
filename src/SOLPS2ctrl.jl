@@ -10,7 +10,10 @@ export find_files_in_allowed_folders, geqdsk_to_imas!, preparation
 include("$(@__DIR__)/supersize_profile.jl")
 include("$(@__DIR__)/repair_eq.jl")
 include("$(@__DIR__)/unit_utils.jl")
+include("$(@__DIR__)/control_utils.jl")
+include("$(@__DIR__)/plant.jl")
 include("$(@__DIR__)/system_id.jl")
+include("$(@__DIR__)/actuators.jl")
 include("$(@__DIR__)/controllers.jl")
 
 """

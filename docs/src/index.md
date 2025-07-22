@@ -30,7 +30,8 @@ using Pkg
 Pkg.add("SOLPS2ctrl")
 ```
 
-## Top file handling functions
+## SOLPS related functionality
+### Top file handling functions
 
 ```@docs
 find_files_in_allowed_folders
@@ -38,7 +39,7 @@ geqdsk_to_imas!
 preparation
 ```
 
-## Repairing/filling out partial equilibrium files
+### Repairing/filling out partial equilibrium files
 
 Tools for repairing/filling out partial equilibrium files.
 
@@ -51,18 +52,18 @@ add_rho_to_equilibrium!
 check_rho_1d
 ```
 
-## Extrapolations
+### Extrapolations
 
 Utilities for extrapolating profiles
 
-### Core profile extrapolations
+#### Core profile extrapolations
 
 ```@docs
 extrapolate_core
 fill_in_extrapolated_core_profile!
 ```
 
-### Edge profiles extrapolations
+#### Edge profiles extrapolations
 
 These functions have not been fully tested and/or supported yet.
 
@@ -71,17 +72,38 @@ mesh_psi_spacing
 cached_mesh_extension!
 ```
 
-## System identification and modeling
+### Unit conversion utilities
 
 ```@docs
-offset_scale
-unscale_unoffset
+gas_unit_converter
+```
+
+## Control related functionality
+
+This package provides a platform to perform closed loop simulations of controllers with
+plant models and actuator models. The key function to run these simulations is `run_closed_loop_sim()` described below. The common architecture for this platform is to create `mutable struct` for each of the actuator, plant, and controller which are
+subtypes of provided abstract types `Actuator`, `Plant`, and `Controller` and the
+struct itself is callable and performs the required function for a discrete time
+instance. See test examples to get an idea of how to use this feature.
+
+### Plant
+
+```@docs
+Plant
+LinearPlant
+InputConditioning
+InpCondLinPlant
+```
+
+### System identification and modeling
+
+```@docs
 system_id
 system_id_optimal_inp_cond
 model_evolve
 ```
 
-## Actuators
+### Actuators
 
 ```@docs
 Actuator
@@ -98,26 +120,26 @@ for (i, inp) in enumerate(inp_series)
 end
 ```
 
-## Controllers
+### Controllers
 
 ```@docs
 Controller
 ```
 
-### Linear Controller
+#### Linear Controller
 
 ```@docs
 LinearController
 ```
 
-### Predicted Variable Linear Controller
+#### Predicted Variable Linear Controller
 
 ```@docs
 PVLC
 state_prediction_matrices
 ```
 
-#### State Prediction Matrix Algebra
+##### State Prediction Matrix Algebra
 
 At step k:
 
@@ -250,22 +272,22 @@ Then, future state can be predicted by:
 x_{k+1} = \mathcal{N} \mathcal{L}^{-1} (\vec{Y} - \mathcal{M} \vec{U}) + \mathcal{O} \vec{U}
 ```
 
-### Model Predictive Controller
+#### Model Predictive Controller
 
 ```@docs
 MPC
 ```
 
-## Closed loop simulations
+### Closed loop simulations
 
 ```@docs
-lsim_step
-model_step
 run_closed_loop_sim
 ```
 
-## Unit conversion utilities
+### Control related utilities
 
 ```@docs
-gas_unit_converter
+lsim_step
+offset_scale
+unscale_unoffset
 ```
