@@ -4,6 +4,7 @@ using IMAS: IMAS
 using SOLPS2imas: SOLPS2imas
 using EFIT: EFIT
 using Interpolations: Interpolations
+using ProgressMeter
 
 export find_files_in_allowed_folders, geqdsk_to_imas!, preparation
 

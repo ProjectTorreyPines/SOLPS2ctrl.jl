@@ -473,6 +473,7 @@ end
             Float64,
             (size(get_sys(plant).B, 2), size(target, 2)),
         ),
+        show_progress::Bool = false
     ) where {T, TE <: Discrete}
 
 Generic function to run closed loop simulations with provided `plant`, actuator
@@ -483,6 +484,7 @@ adjustments to inputs and outputs of the plant model as explained in
 control loop at an arbitrary point in the loop. `noise_plant_inp`, `noise_plant_out`,
 and `noise_ctrl_out` allow addition of predefined noise waveforms at the input of plant,
 output of plant, and the output of controller respectively.
+If show_progress is set to true a progress bar will be shown.
 """
 function run_closed_loop_sim(
     plant::Plant,
@@ -506,6 +508,7 @@ function run_closed_loop_sim(
         Float64,
         (size(get_sys(plant).B, 2), size(target, 2)),
     ),
+    show_progress::Bool = false
 )
     # Take the plant, actuator, and controller by value
     plant = deepcopy(plant)
@@ -519,6 +522,7 @@ function run_closed_loop_sim(
     plant_out = zeros(Float64, (size(plant_sys.C, 1), length(target)))
 
     # Closed loop simulation
+    prog = Progress(size(target,2); showspeed=true, enabled=show_progress)
     for ii ∈ axes(target, 2)
         # Actuation
         plant_inp[:, ii] =
@@ -534,6 +538,7 @@ function run_closed_loop_sim(
                 ctrl(; ii, target, plant_inp, plant_out, act, inp_feedforward
                 ) .+ noise_ctrl_out[:, ii+1]
         end
+        next!(prog)
     end
     return Dict(
         :plant => plant,
