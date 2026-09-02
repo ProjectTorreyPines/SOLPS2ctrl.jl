@@ -6,3 +6,4 @@ Manifest.toml
 sd_input_data.json
 example/*.toml
 docs/build
+pvlc_config*.txt
