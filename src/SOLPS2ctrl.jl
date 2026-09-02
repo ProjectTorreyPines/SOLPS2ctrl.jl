@@ -32,8 +32,8 @@ Example:
 
 ```julia
 SOLPS2ctrl.find_files_in_allowed_folders(
-    "<your samples folder>/D3D_Ma_184833_03600";
-    eqdsk_file="g184833.03600",
+    \"<your samples folder>/D3D_Ma_184833_03600\";
+    eqdsk_file=\"g184833.03600\",
 )
 ```
 """
@@ -355,25 +355,30 @@ end
 function zero_pad_str(array::Vector, len::Int64, format=Printf.Format("%+13.6e"))
     padded = zeros(len)
     m = min(length(array), len)
-    for i in 1:m
+    for i ∈ 1:m
         padded[i] = array[i]
     end
-    str_rep = join([Printf.format(format, pad) for pad in padded], " ")
+    str_rep = join([Printf.format(format, pad) for pad ∈ padded], " ")
     return str_rep
 end
 
-function zero_pad_str(array::Matrix, rows::Int64, cols::Int64, format=Printf.Format("%+13.6e"))
+function zero_pad_str(
+    array::Matrix,
+    rows::Int64,
+    cols::Int64,
+    format=Printf.Format("%+13.6e"),
+)
     padded = zeros(rows, cols)
     m = min(size(array)[1], rows)
     n = min(size(array)[2], cols)
-    for i in 1:m
-        for j in 1:n
-            padded[i,j] = array[i,j]
+    for i ∈ 1:m
+        for j ∈ 1:n
+            padded[i, j] = array[i, j]
         end
     end
     row_strings = ""
-    for i in 1:rows
-        str_r = join([Printf.format(format, pad) for pad in padded[i, :]], " ")
+    for i ∈ 1:rows
+        str_r = join([Printf.format(format, pad) for pad ∈ padded[i, :]], " ")
         row_strings = join([row_strings, str_r], "\n")
     end
     return row_strings
@@ -381,7 +386,7 @@ end
 
 function username()
     possible_environment_vars_for_username = ["USER", "USERNAME", "LNAME", "LOGNAME"]
-    for varname in possible_environment_vars_for_username
+    for varname ∈ possible_environment_vars_for_username
         haskey(ENV, varname) && return ENV[varname]
     end
     return nothing
@@ -438,7 +443,11 @@ function write_pcs_config(
 
     date = Dates.format(Date(today()), "yyyymmdd")
 
-    serial = date * string(n_states) * string(n_inputs) * string(n_outputs) * string(n_history, pad=4) * string(model_type_code) * string(gas_atomic_number, pad=2) * string(secondary_gas_atomic_number, pad=2) * string(model_counter, pad=2)
+    serial =
+        date * string(n_states) * string(n_inputs) * string(n_outputs) *
+        string(n_history; pad=4) * string(model_type_code) *
+        string(gas_atomic_number; pad=2) * string(secondary_gas_atomic_number; pad=2) *
+        string(model_counter; pad=2)
     filename = "pvlc_config_" * serial * ".txt"
     ff = Printf.Format("%+13.6e")
 
@@ -454,7 +463,10 @@ function write_pcs_config(
         println(io, "Input instructions:  " * input_description)
         println(io, "Output instructions: " * output_description)
         println(io, "Particle counts (densities, flows, etc.) are divided by 1e19.")
-        println(io, "Prepared with the following assumptions about PCS setup (these are hard coded into the PCS and they must match):")
+        println(
+            io,
+            "Prepared with the following assumptions about PCS setup (these are hard coded into the PCS and they must match):",
+        )
         println(io, "::")
         println(io, "DENSITYCS_N_PREDICTOR_INPUTS  = $(DENSITYCS_N_PREDICTOR_INPUTS)")
         println(io, "DENSITYCS_N_PREDICTOR_OUTPUTS = $(DENSITYCS_N_PREDICTOR_OUTPUTS)")
@@ -467,26 +479,108 @@ function write_pcs_config(
         println(io, "Number of inputs                   : $(n_inputs)")
         println(io, "Number of outputs                  : $(n_outputs)")
         println(io, "Number of history steps (tracking) : $(n_history)")
-        println(io, "Model step time (seconds)          : " * Printf.format(ff, model_time_step_sec))
-        println(io, "G_P (1e19 molec/s per physics unit): " * zero_pad_str(Gp, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "Tau_I (seconds)                    : " * zero_pad_str(tauI, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "Input offsets (10^19 molecules/sec): " * zero_pad_str(input_offset, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "Input norm factors                 : " * zero_pad_str(input_factor, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "Output offsets (physics units)     : " * zero_pad_str(output_offset, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Output norm factors                : " * zero_pad_str(output_factor, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Input adaptation G_P (1/in.units)  : " * zero_pad_str(adapt_input_Gp, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Input adaptation tau_I (seconds)   : " * zero_pad_str(adapt_input_tauI, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Output adaptation G_P (1/out.units): " * zero_pad_str(adapt_output_Gp, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Output adaptation tau_I (seconds)  : " * zero_pad_str(adapt_output_tauI, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Adaptation factor minimum          : " * Printf.format(ff, adapt_factor_min)) #* zero_pad_str(adapt_factor_min, DENSITYCS_N_PREDICTOR_OUTPUTS))
-        println(io, "Adaptation factor maximum          : " * Printf.format(ff, adapt_factor_max)) #* zero_pad_str(adapt_factor_max, DENSITYCS_N_PREDICTOR_OUTPUTS))
+        println(
+            io,
+            "Model step time (seconds)          : " *
+            Printf.format(ff, model_time_step_sec),
+        )
+        println(
+            io,
+            "G_P (1e19 molec/s per physics unit): " *
+            zero_pad_str(Gp, DENSITYCS_N_PREDICTOR_INPUTS),
+        )
+        println(
+            io,
+            "Tau_I (seconds)                    : " *
+            zero_pad_str(tauI, DENSITYCS_N_PREDICTOR_INPUTS),
+        )
+        println(
+            io,
+            "Input offsets (10^19 molecules/sec): " *
+            zero_pad_str(input_offset, DENSITYCS_N_PREDICTOR_INPUTS),
+        )
+        println(
+            io,
+            "Input norm factors                 : " *
+            zero_pad_str(input_factor, DENSITYCS_N_PREDICTOR_INPUTS),
+        )
+        println(
+            io,
+            "Output offsets (physics units)     : " *
+            zero_pad_str(output_offset, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Output norm factors                : " *
+            zero_pad_str(output_factor, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Input adaptation G_P (1/in.units)  : " *
+            zero_pad_str(adapt_input_Gp, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Input adaptation tau_I (seconds)   : " *
+            zero_pad_str(adapt_input_tauI, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Output adaptation G_P (1/out.units): " *
+            zero_pad_str(adapt_output_Gp, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Output adaptation tau_I (seconds)  : " *
+            zero_pad_str(adapt_output_tauI, DENSITYCS_N_PREDICTOR_OUTPUTS),
+        )
+        println(
+            io,
+            "Adaptation factor minimum          : " *
+            Printf.format(ff, adapt_factor_min),
+        ) #* zero_pad_str(adapt_factor_min, DENSITYCS_N_PREDICTOR_OUTPUTS))
+        println(
+            io,
+            "Adaptation factor maximum          : " *
+            Printf.format(ff, adapt_factor_max),
+        ) #* zero_pad_str(adapt_factor_max, DENSITYCS_N_PREDICTOR_OUTPUTS))
         println(io, "::")
-        println(io, "A = " * zero_pad_str(A, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_PREDICTOR_STATES))
-        println(io, "B = " * zero_pad_str(B, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "C = " * zero_pad_str(C, DENSITYCS_N_PREDICTOR_OUTPUTS, DENSITYCS_N_PREDICTOR_STATES))
-        println(io, "D = " * zero_pad_str(D, DENSITYCS_N_PREDICTOR_OUTPUTS, DENSITYCS_N_PREDICTOR_INPUTS))
-        println(io, "Y2x (J) = " * zero_pad_str(Y2x, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_JMATRIX_COLS))
-        println(io, "U2x (K) = " * zero_pad_str(U2x, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_KMATRIX_COLS))
+        println(
+            io,
+            "A = " *
+            zero_pad_str(A, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_PREDICTOR_STATES),
+        )
+        println(
+            io,
+            "B = " *
+            zero_pad_str(B, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_PREDICTOR_INPUTS),
+        )
+        println(
+            io,
+            "C = " * zero_pad_str(
+                C,
+                DENSITYCS_N_PREDICTOR_OUTPUTS,
+                DENSITYCS_N_PREDICTOR_STATES,
+            ),
+        )
+        println(
+            io,
+            "D = " * zero_pad_str(
+                D,
+                DENSITYCS_N_PREDICTOR_OUTPUTS,
+                DENSITYCS_N_PREDICTOR_INPUTS,
+            ),
+        )
+        println(
+            io,
+            "Y2x (J) = " *
+            zero_pad_str(Y2x, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_JMATRIX_COLS),
+        )
+        return println(
+            io,
+            "U2x (K) = " *
+            zero_pad_str(U2x, DENSITYCS_N_PREDICTOR_STATES, DENSITYCS_N_KMATRIX_COLS),
+        )
     end
 end
 
